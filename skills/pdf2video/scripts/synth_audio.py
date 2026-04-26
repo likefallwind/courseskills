@@ -26,7 +26,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "endpoint": "https://api.minimaxi.com/v1/t2a_v2",
-    "model": "speech-2.8-hd",
+    "model": "speech-2.8-turbo",
     "api_key_env": "MINIMAX_API_KEY",
     "speed": 1.0,
     "emotion": "calm",
