@@ -37,15 +37,13 @@ All output (handout text, on-slide text, image text) must match the language of 
    - **Content** → `slides/NNN-slug.png`, mirroring `slide-units/` filenames 1:1. For each slide-unit file, payload is the file's verbatim content.
    - **Ending** → `slides/zzz-ending.png`. Short closing slide (e.g., "谢谢 / Q&A" in the course language). Custom ending text can be added by the user in `## Image Generation Settings`.
 7. **Batch review, then targeted regeneration.** After all slides (cover + content + ending) are generated, present the deck to the user for review in one pass. The user identifies which specific slides need changes and provides per-slide revision feedback. Regenerate only those slides, one at a time, by re-running `imagegen` with the same prefix + payload plus the user's revision note appended. Overwrite the same `slides/` filename so PDF assembly picks up the latest version. Never regenerate a slide without an explicit per-slide instruction from the user. If the user's feedback is actually about content (not visuals) for a content slide, edit `handout.md` and rerun the split script first; for cover/ending content fixes, edit `outline.md`.
-8. **Assemble PDF.** Use Pillow to combine slide images in filename order:
+8. **Assemble PDF.** Run `scripts/images2pdf.py` to combine all slide images in filename order into a single PDF:
 
-   ```python
-   from PIL import Image
-   from pathlib import Path
-   paths = sorted(Path("course/slides").glob("*.png"))
-   imgs = [Image.open(p).convert("RGB") for p in paths]
-   imgs[0].save("course/course-deck.pdf", save_all=True, append_images=imgs[1:])
+   ```bash
+   python scripts/images2pdf.py course/slides course/course-deck.pdf
    ```
+
+   The script sorts images alphabetically (`000-cover.png` → content slides → `zzz-ending.png`), so page order is always correct. Requires Pillow (`pip install Pillow`). The output path defaults to `<slides-dir>/../course-deck.pdf` if omitted.
 
 ## Output Structure
 
