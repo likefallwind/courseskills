@@ -1,0 +1,23 @@
+## 简介
+
+skillname: pdf2video
+
+功能：在课程pdf基础上，生成课程讲解视频
+注意：本skills要求是基于 codex2course生成 对应pdf和handout
+
+## 步骤：
+
+1. 检查outline, handout, slide unit, slides 是否完整。尤其是handout里面是不是明确了按照slides做了划分；slides/ 里面是不是已经生成了相关图片（不用检查图片内容，有图片就行）
+2. 基于handout slide划分，和 outline.md 的介绍，写对应视频的逐字稿（包括开头页和致谢部分，都要有），要和slide unit一一对应，如果 outline.md 没有对受众等明确描述，可以问用户。
+3. 在逐字稿基础上，使用语音合成API生成对应音频，做到音频和图片一一对应
+4. 将音频和图片拼成视频，每个图片播放时长即为音频长度（可以前后有个适当延长，但不要太多，保证不突兀就可以）
+
+## 音频：
+
+1. 音频直接使用API，方法尽量通用一点。最后是一个生成音频的脚本，之后使用直接调用就可以
+2. 如果音频可以做通用就通用接口，让大家写API地址；如果不行，就先假设用MINIMAX，让用户配好api
+3. MINIMAX 参考：https://platform.minimaxi.com/docs/api-reference/speech-t2a-async-create 以及其他相关文件
+
+## 其他：
+
+1. 一个生成好图片，handout等的例子是：/home/likefallwind/code/claude2claw/course_part4_society_of_agents_course
