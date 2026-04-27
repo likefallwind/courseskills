@@ -1,9 +1,10 @@
 # codex2course
 
-Two [Claude Code](https://claude.ai/code) skills for turning a course topic into a full narrated lecture video:
+[Claude Code](https://claude.ai/code) skills for course creation — from design to narrated lecture video:
 
 | Skill | What it does |
 |---|---|
+| **ai-tutorials** | Design AI course syllabus, lectures, and hands-on projects |
 | **codex2course** | Topic / outline → handout → slide images → PDF |
 | **pdf2video** | Slide deck → per-slide narration → TTS audio → mp4 |
 
@@ -15,34 +16,34 @@ Each skill can be installed and used independently. `pdf2video` assumes the outp
 
 Requires [Node.js](https://nodejs.org/). Skills are installed to `~/.claude/skills/`. Restart Claude Code after installing.
 
-### codex2course only
+### Single skill
 
 ```bash
-npx skills add likefallwind/codex2course --skill codex2course
+npx skills add likefallwind/courseskills --skill ai-tutorials
+npx skills add likefallwind/courseskills --skill codex2course
+npx skills add likefallwind/courseskills --skill pdf2video
 ```
 
-### pdf2video only
+### All skills
 
 ```bash
-npx skills add likefallwind/codex2course --skill pdf2video
-```
-
-### Both skills
-
-```bash
-npx skills add likefallwind/codex2course
+npx skills add likefallwind/courseskills
 ```
 
 <details>
 <summary>Manual install (no Node.js)</summary>
 
 ```bash
+# ai-tutorials
+curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/ai-tutorials/SKILL.md \
+  -o ~/.claude/skills/ai-tutorials.md
+
 # codex2course
-curl -fsSL https://raw.githubusercontent.com/likefallwind/codex2course/main/skills/codex2course/SKILL.md \
+curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/codex2course/SKILL.md \
   -o ~/.claude/skills/codex2course.md
 
 # pdf2video
-curl -fsSL https://raw.githubusercontent.com/likefallwind/codex2course/main/skills/pdf2video/SKILL.md \
+curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/pdf2video/SKILL.md \
   -o ~/.claude/skills/pdf2video.md
 ```
 
@@ -81,14 +82,17 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/codex2course/main/skil
 Start a conversation in Claude Code and describe your goal. The skills trigger automatically from natural language:
 
 ```
+# ai-tutorials
+Design a 10-lesson LLM application development course for CS undergrads.
+
 # codex2course
 Create a 6-hour Python async course for backend engineers.
 
 # pdf2video  
 Turn the course in ./course/ into a narrated lecture video, voice: male-qn-qingse.
 
-# Full pipeline (both skills)
-Build a course on LLM prompt engineering, then produce a narrated mp4.
+# Full pipeline
+Design a Vibe Coding course, then build slides and produce a narrated mp4.
 ```
 
 Both skills are incremental — they inspect what already exists and pick up at the next missing stage, so you can stop, review, and resume without redoing approved work.

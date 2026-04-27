@@ -1,10 +1,10 @@
 {
-  "name": "codex2course",
+  "name": "courseskills",
   "version": "1.0.0",
-  "description": "Claude Code skills: codex2course (topic → slides PDF) and pdf2video (slides → narrated mp4)",
+  "description": "Claude Code skills for course creation: ai-tutorials, codex2course, pdf2video",
   "repository": {
     "type": "git",
-    "url": "https://github.com/likefallwind/codex2course.git"
+    "url": "https://github.com/likefallwind/courseskills.git"
   },
   "keywords": ["claude-code", "skill", "course", "slides", "tts", "video"],
   "license": "MIT"
