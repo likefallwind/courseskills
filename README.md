@@ -13,24 +13,24 @@ Each skill can be installed and used independently. `pdf2video` assumes the outp
 
 ## Install
 
-Skills are installed to `~/.claude/skills/`. After installing, restart Claude Code (or reload the window).
+Requires [Node.js](https://nodejs.org/). Skills are installed to `~/.claude/skills/`. Restart Claude Code after installing.
 
 ### codex2course only
 
 ```bash
-npx github:likefallwind/codex2course codex2course
+npx skills add likefallwind/codex2course --skill codex2course
 ```
 
 ### pdf2video only
 
 ```bash
-npx github:likefallwind/codex2course pdf2video
+npx skills add likefallwind/codex2course --skill pdf2video
 ```
 
 ### Both skills
 
 ```bash
-npx github:likefallwind/codex2course
+npx skills add likefallwind/codex2course
 ```
 
 <details>

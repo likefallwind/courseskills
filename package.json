@@ -2,12 +2,6 @@
   "name": "codex2course",
   "version": "1.0.0",
   "description": "Claude Code skills: codex2course (topic → slides PDF) and pdf2video (slides → narrated mp4)",
-  "bin": {
-    "codex2course": "bin/install.js"
-  },
-  "scripts": {
-    "postinstall": "node bin/install.js"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/likefallwind/codex2course.git"
