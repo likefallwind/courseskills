@@ -15,6 +15,7 @@ Reads padding from <course-dir>/audio.md keys head_silence_sec / tail_silence_se
 Requires: ffmpeg on PATH. No third-party libs.
 """
 import argparse
+import math
 import re
 import shutil
 import subprocess
@@ -83,15 +84,39 @@ def pair_slides_audio(slides_dir: Path, audio_dir: Path) -> list[tuple[Path, Pat
     return pairs
 
 
+def probe_duration(path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    return float(out)
+
+
 def render_segment(image: Path, audio: Path, out: Path, settings: dict) -> None:
-    head_ms = int(settings["head_silence_sec"] * 1000)
-    tail_sec = settings["tail_silence_sec"]
+    head_sec = float(settings["head_silence_sec"])
+    tail_sec = float(settings["tail_silence_sec"])
     w, h, fps = settings["width"], settings["height"], settings["fps"]
+
+    # Lock segment duration to an integer number of frames so that video and
+    # audio stream durations match exactly. Otherwise -shortest cuts video at
+    # the last full frame, leaving a per-segment gap of up to 1/fps that
+    # accumulates across concat copy and drifts the final mp4 (audio ends up
+    # later than video, by ~16ms × N segments).
+    audio_body = probe_duration(audio)
+    target = head_sec + audio_body + tail_sec
+    frames = math.ceil(target * fps)
+    seg_dur = frames / fps  # exact frame-aligned duration
+    head_ms = int(round(head_sec * 1000))
+
     vf = (
         f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     )
-    af = f"adelay={head_ms}:all=1,apad=pad_dur={tail_sec}"
+    # adelay shifts the body by head_silence; apad with whole_dur pads to the
+    # exact frame-aligned target so the audio stream ends at the same instant
+    # as the last video frame.
+    af = f"adelay={head_ms}:all=1,apad=whole_dur={seg_dur:.6f}"
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-loop", "1", "-framerate", str(fps), "-i", str(image),
@@ -99,9 +124,10 @@ def render_segment(image: Path, audio: Path, out: Path, settings: dict) -> None:
         "-af", af,
         "-vf", vf,
         "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
-        "-r", str(fps),
+        "-r", str(fps), "-frames:v", str(frames),
         "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
-        "-shortest", "-movflags", "+faststart",
+        "-t", f"{seg_dur:.6f}",
+        "-movflags", "+faststart",
         str(out),
     ]
     subprocess.run(cmd, check=True)
