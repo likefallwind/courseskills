@@ -36,7 +36,7 @@ All output (handout text, on-slide text, image text) must match the language of 
    - **Cover** → `slides/000-cover.png`. Content payload built from `## Course Info` (course title from `outline.md`'s H1, instructor, institution, target audience as a tone cue), with an explicit instruction that this is the deck's cover.
    - **Content** → `slides/NNN-slug.png`, mirroring `slide-units/` filenames 1:1. For each slide-unit file, payload is the file's verbatim content.
    - **Ending** → `slides/zzz-ending.png`. Short closing slide (e.g., "谢谢 / Q&A" in the course language). Custom ending text can be added by the user in `## Image Generation Settings`.
-   - If the full deck has more than 10 images (cover + content + ending), use the Sequential Sub-Agent Batching protocol below instead of generating all images in the main conversation context.
+   - If the full deck has more than 10 images (cover + content + ending), use the Sequential Sub-Agent Batching protocol below for content slides. Generate cover and ending slides separately because their layouts intentionally differ from normal content slides.
 7. **Batch review, then targeted regeneration.** After all slides (cover + content + ending) are generated, present the deck to the user for review in one pass. The user identifies which specific slides need changes and provides per-slide revision feedback. Regenerate only those slides, one at a time, by re-running `imagegen` with the same prefix + payload plus the user's revision note appended. Overwrite the same `slides/` filename so PDF assembly picks up the latest version. Never regenerate a slide without an explicit per-slide instruction from the user. If the user's feedback is actually about content (not visuals) for a content slide, edit `handout.md` and rerun the split script first; for cover/ending content fixes, edit `outline.md`.
 8. **Assemble PDF.** Run `scripts/images2pdf.py` to combine all slide images in filename order into a single PDF:
 
@@ -161,27 +161,31 @@ Do not over-structure the prompt — `gpt-image-2` handles composition, layout, 
 
 ## Sequential Sub-Agent Batching
 
-Large decks can stall or degrade when one conversation accumulates many image-generation calls and generated-image artifacts. When the deck needs more than 10 images total, keep the main agent as the orchestrator and delegate image generation to one sub-agent at a time.
+Large decks can stall or degrade when one conversation accumulates many image-generation calls and generated-image artifacts. When the deck needs more than 10 images total, keep the main agent as the orchestrator and delegate content-slide image generation to one sub-agent at a time.
 
 Rules:
 
 - Use this protocol only when sub-agents are available. If they are not available, continue in the main thread but pause every 5 images to summarize progress, check saved files, and keep the prompt context tight.
 - Do not launch all image-generation sub-agents at once. Start exactly one batch worker, wait for it to finish and report saved file paths, verify the expected files exist, then start the next batch.
 - Batch size is 5 images by default. Use smaller batches for very dense slides or if imagegen responses become slow; do not exceed 5 unless the user explicitly asks.
-- The main agent owns course structure, source files, batch planning, review, and PDF assembly. Batch workers only generate their assigned images, save them into `slides/`, and report paths plus any failures.
+- The main agent owns course structure, cover generation, ending generation, source files, batch planning, review, and PDF assembly. Batch workers only generate assigned content-slide images, save them into `slides/`, and report paths plus any failures.
 - Batch workers must use the `imagegen` skill for every assigned slide image. They must not edit `outline.md`, `handout.md`, `slide-units/`, or unrelated generated slides.
 - Keep sub-agent context minimal. Do not fork the entire conversation unless necessary. Give each worker only the style contract, the exact course-level prefix, the assigned slide payloads or readable file paths, and the required output filenames.
-- Starting with batch 2, give each worker the last successfully generated image from the immediately previous batch as a visual style anchor. The worker must inspect that image before its first imagegen call and use it only to match style, typography feel, palette, density, and aspect ratio; it must not copy the previous slide's content or layout literally.
+- Starting with content batch 2, give each worker the last successfully generated content slide from the immediately previous content batch as a visual style anchor. The worker must inspect that image before its first imagegen call and use it only to match style, typography feel, palette, density, and aspect ratio; it must not copy the previous slide's content or layout literally.
+- Do not use the cover image as an anchor for content slides, and do not use a content slide as an anchor for the ending slide. Cover and ending slides have intentionally different layouts from content pages.
+- If a prior approved cover image for the same course family exists, use it as the cover's visual style anchor. If a prior approved ending image exists, use it as the ending's visual style anchor. If no corresponding anchor exists, generate the cover or ending from the course-level prefix and payload only.
 
 Batch order:
 
-1. Build the ordered image manifest: `000-cover.png`, all `slide-units/*.md` in filename order mapped to matching `.png` names, then `zzz-ending.png`.
-2. Split the manifest into contiguous groups of up to 5 images.
-3. Start the first worker with batch 1 only.
-4. After the worker finishes, verify all assigned output files exist under `slides/` and look plausibly current.
-5. For the next worker, include the previous batch's final output image path as `Visual style anchor`.
-6. Repeat until all batches are complete.
-7. If a worker fails or produces missing files, retry only that batch before moving forward.
+1. Generate `slides/000-cover.png` separately in the main agent. Use a prior approved cover image as a visual anchor only when one exists.
+2. Build the ordered content-image manifest from `slide-units/*.md` in filename order, mapped to matching `slides/*.png` filenames. Do not include `000-cover.png` or `zzz-ending.png` in this manifest.
+3. Split the content manifest into contiguous groups of up to 5 images.
+4. Start the first content worker with batch 1 only.
+5. After the worker finishes, verify all assigned output files exist under `slides/` and look plausibly current.
+6. For the next content worker, include the previous content batch's final output image path as `Visual style anchor`.
+7. Repeat until all content batches are complete.
+8. If a worker fails or produces missing files, retry only that content batch before moving forward.
+9. Generate `slides/zzz-ending.png` separately in the main agent. Use a prior approved ending image as a visual anchor only when one exists.
 
 Every worker prompt must include a compact style contract before the per-slide assignments:
 
@@ -197,7 +201,7 @@ Style contract:
 
 Visual style anchor:
 - Batch 1: none.
-- Batch 2 or later: inspect this previous batch's final generated image before generating anything: course/slides/005-topic.png
+- Content batch 2 or later: inspect this previous content batch's final generated content slide before generating anything: course/slides/005-topic.png
 - Use the anchor only for visual continuity. Do not reuse its content, title, diagram, or exact composition unless the assigned payload calls for it.
 
 Assigned images:
@@ -211,9 +215,11 @@ Return only:
 - any failed assignment and the reason
 ```
 
-For cover and ending slides, include the same payload rules from the Imagegen Call Pattern table. For content slides, use each slide-unit file's verbatim content as the payload. The style contract exists to preserve consistency across batches; it does not replace the course-level prefix.
+For content slides, use each slide-unit file's verbatim content as the payload. The style contract exists to preserve consistency across batches; it does not replace the course-level prefix.
 
-For targeted regeneration handled by a sub-agent, include the nearest already-approved neighboring slide image as the visual style anchor when one exists. Prefer the preceding approved slide; if the regenerated slide is first, use the following approved slide. The anchor should stabilize visual style only, not content.
+Cover and ending slides are generated outside the content-worker batches. For cover and ending slides, include the same payload rules from the Imagegen Call Pattern table. Use a corresponding visual anchor only from the same slide kind: cover-to-cover or ending-to-ending. If there is no corresponding approved anchor, use no visual anchor.
+
+For targeted regeneration handled by a sub-agent, use a visual anchor from the same slide kind. For content-slide regeneration, include the nearest already-approved neighboring content slide when one exists; prefer the preceding approved content slide, or use the following approved content slide if needed. For cover or ending regeneration, use only a prior approved cover or ending image respectively; if none exists, use no visual anchor. The anchor should stabilize visual style only, not content.
 
 ## Quality Bar
 
@@ -224,7 +230,7 @@ For targeted regeneration handled by a sub-agent, include the nearest already-ap
 | Image pages | Text is readable, layout is not crowded, visual metaphor matches content |
 | Cover/Ending | Cover shows title + instructor + institution clearly; ending is simple and uncluttered; both share style with content slides |
 | PDF | Cover first, ending last, content in order, consistent aspect ratio, no missing or stale regenerated pages |
-| Large-deck batching | More than 10 images are generated in sequential batches of up to 5, each batch receives the previous batch's final image as a visual style anchor, each batch saves exact filenames, and the main agent verifies files before continuing |
+| Large-deck batching | More than 10 images use separately generated cover/ending slides plus sequential content batches of up to 5, each content batch after the first receives the previous content batch's final content slide as a visual style anchor, each batch saves exact filenames, and the main agent verifies files before continuing |
 
 ## Common Mistakes
 
@@ -238,7 +244,8 @@ For targeted regeneration handled by a sub-agent, include the nearest already-ap
 - **Using placeholders instead of imagegen.** If the deliverable needs a slide page image, use `imagegen`.
 - **Launching many image-generation sub-agents at once.** For large decks, run one batch worker at a time so context, file writes, and failures stay controlled.
 - **Giving batch workers the whole conversation.** Pass only the style contract, course-level prefix, assigned payloads/paths, and output filenames.
-- **Skipping the visual anchor after batch 1.** Later batch workers should inspect the previous batch's final approved slide image before generating their own slides.
+- **Skipping the visual anchor after content batch 1.** Later content batch workers should inspect the previous content batch's final approved content slide image before generating their own slides.
+- **Mixing slide-kind anchors.** Do not anchor content slides on the cover, and do not anchor the ending slide on a content page. Use cover-to-cover, content-to-content, and ending-to-ending anchors only.
 - **Regenerating slides without explicit per-slide feedback** from the user, or regenerating the whole deck when only a few pages need fixes.
 - **Restarting the workflow from step 1** when a reviewed handout or slide-unit file already exists. Pick up at the next missing stage.
 - **Inventing instructor/institution/audience** when `outline.md` doesn't specify them. Ask the user.
