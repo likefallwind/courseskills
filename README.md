@@ -7,8 +7,9 @@
 | **ai-tutorials** | Design AI course syllabus, lectures, and hands-on projects |
 | **codex2course** | Topic / outline → handout → slide images → PDF |
 | **pdf2video** | Slide deck → per-slide narration → TTS audio → mp4 |
+| **makecourse** | Orchestration skill for agents — chains the three skills above end-to-end via `codex exec` |
 
-Each skill can be installed and used independently. `pdf2video` assumes the output layout produced by `codex2course`.
+Each skill can be installed and used independently. `pdf2video` assumes the output layout produced by `codex2course`. `makecourse` is intended for automation agents (e.g. openclaw, hermes) that drive the full pipeline by shelling out to the `codex` CLI.
 
 ---
 
@@ -22,6 +23,7 @@ Requires [Node.js](https://nodejs.org/). Skills are installed to `~/.claude/skil
 npx skills add likefallwind/courseskills --skill ai-tutorials
 npx skills add likefallwind/courseskills --skill codex2course
 npx skills add likefallwind/courseskills --skill pdf2video
+npx skills add likefallwind/courseskills --skill makecourse
 ```
 
 ### All skills
@@ -45,6 +47,10 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
 # pdf2video
 curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/pdf2video/SKILL.md \
   -o ~/.claude/skills/pdf2video.md
+
+# makecourse
+curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/makecourse/SKILL.md \
+  -o ~/.claude/skills/makecourse.md
 ```
 
 </details>
@@ -75,6 +81,12 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
   export MINIMAX_API_KEY=your_key_here
   ```
 
+### makecourse
+
+- Everything above (the inner skills must be installed and reachable to `codex`).
+- [Codex CLI](https://github.com/openai/codex) on `PATH` — the skill drives the pipeline by shelling out to `codex exec`.
+- Run from an agent runtime that can execute shell commands (openclaw, hermes, scheduled bots, etc.). It is not designed for direct human invocation — call the inner skills directly instead.
+
 ---
 
 ## Usage
@@ -95,7 +107,24 @@ Turn the course in ./course/ into a narrated lecture video, voice: male-qn-qings
 Design a Vibe Coding course, then build slides and produce a narrated mp4.
 ```
 
-Both skills are incremental — they inspect what already exists and pick up at the next missing stage, so you can stop, review, and resume without redoing approved work.
+All four skills are incremental — they inspect what already exists and pick up at the next missing stage, so you can stop, review, and resume without redoing approved work.
+
+### Agent-driven full pipeline (`makecourse`)
+
+When an automation agent (openclaw, hermes, …) needs to produce a full course unattended, it should load the `makecourse` skill and shell out to the Codex CLI per stage:
+
+```bash
+codex exec --cd ./course --sandbox workspace-write \
+  "Use the ai-tutorials skill to generate a complete course on '<topic>' …"
+
+codex exec --cd ./course/lesson1 --sandbox workspace-write \
+  "Use the codex2course skill on this directory …"
+
+codex exec --cd ./course/lesson1 --sandbox workspace-write \
+  "Use the pdf2video skill on this directory. TTS provider: edge …"
+```
+
+The skill itself documents the exact prompts, per-lesson loop, and verification checks. See [`skills/makecourse/SKILL.md`](skills/makecourse/SKILL.md).
 
 ---
 
