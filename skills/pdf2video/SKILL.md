@@ -1,13 +1,17 @@
 ---
 name: pdf2video
-description: Use when turning a codex2course-produced course package (outline.md + handout.md + slide-units/ + slides/*.png) into a narrated lecture video — writes per-slide narration, synthesizes voice via MINIMAX TTS, and assembles slides + audio into a single mp4 with ffmpeg.
+description: Use when turning a codex2course-produced course package (outline.md + handout.md + slide-units/ + slides/*.png) into a narrated lecture video — writes per-slide narration, synthesizes voice via either MINIMAX TTS (paid, higher quality) or Microsoft Edge TTS (free), and assembles slides + audio into a single mp4 with ffmpeg.
 ---
 
 # Pdf2Video
 
 ## Overview
 
-Take a course package already produced by `codex2course` and turn it into a narrated lecture video. Stages: sanity-check inputs → set audio params → write per-slide narration (hard stop for review) → synthesize per-slide audio → assemble slides + audio into one `course-video.mp4` with ffmpeg.
+Take a course package already produced by `codex2course` and turn it into a narrated lecture video. Stages: sanity-check inputs → choose TTS provider + set audio params → write per-slide narration (hard stop for review) → synthesize per-slide audio → assemble slides + audio into one `<course title>.mp4` (falls back to `course-video.mp4`) with ffmpeg.
+
+**TTS provider choice.** Two options, picked at step 2:
+- **`minimax`** — paid, higher-quality Chinese/multilingual voices, supports `emotion`. Requires `MINIMAX_API_KEY`.
+- **`edge`** — free, uses Microsoft Edge's read-aloud voices via `edge-tts` (`pip install edge-tts`). No API key, no per-character cost. Quality is solid for lecture narration but no `emotion` control. Use this to cut costs.
 
 **REQUIRED UPSTREAM:** This skill assumes a directory produced by `codex2course` — `outline.md`, `handout.md`, `slide-units/NNN-*.md`, `slides/000-cover.png` + `NNN-*.png` + `zzz-ending.png`. If anything is missing, send the user back to `codex2course` first.
 
@@ -24,25 +28,31 @@ Do not use this skill when:
 
 ## Workflow
 
-Each stage is independently invocable. Inspect what already exists (`audio.md`, `narration/`, `audio/`, `course-video.mp4`) and start at the next missing stage — do not redo work the user already approved.
+Each stage is independently invocable. Inspect what already exists (`audio.md`, `narration/`, `audio/`, `*.mp4`) and start at the next missing stage — do not redo work the user already approved.
 
 All narration text must match the language of the slides / handout.
 
 1. **Sanity-check inputs.** Confirm the course directory has `outline.md`, `handout.md`, `slide-units/` (with `NNN-*.md` files), and `slides/` (with `000-cover.png`, content `NNN-*.png`, and `zzz-ending.png`). The `NNN-*` slug stems must match between `slide-units/` and `slides/`. If anything is missing, stop and tell the user to complete `codex2course` first.
-2. **Write `audio.md`.** If `audio.md` doesn't exist, gather TTS / voice settings (defaulting to MINIMAX sync), pull `target audience` from `outline.md`'s `## Course Info` as a tone cue, and write `audio.md` using the Audio Settings Template below. Ask the user for any missing voice preference (voice_id, speed, emotion). Do not invent a voice.
+2. **Write `audio.md`.** If `audio.md` doesn't exist:
+   - **Ask the user which TTS provider to use: `minimax` (paid, higher quality) or `edge` (free, Microsoft Edge read-aloud).** Do not pick one silently — cost differs significantly. If they have no preference, recommend `edge` for cost-sensitive cases and `minimax` when broadcast-grade voice matters.
+   - Pull `target audience` from `outline.md`'s `## Course Info` as a tone cue.
+   - Write `audio.md` using the Audio Settings Template below, filling in the `provider` field with the chosen value and using provider-appropriate `voice_id` (MINIMAX voice id like `male-qn-qingse`, or Edge voice like `zh-CN-YunxiNeural` / `en-US-AriaNeural`).
+   - Ask the user for any missing voice preference (voice_id, speed). For `minimax` also ask emotion. Do not invent a voice.
 3. **Draft narration files.** For every image in `slides/` (cover + content + ending), write a matching `narration/<same-stem>.md`:
    - **Cover** (`narration/000-cover.md`) — opening: who's speaking (instructor + institution from `outline.md`), what the course covers, who it's for. Required.
    - **Content** (`narration/NNN-<slug>.md`) — spoken-style narration for the slide. Source: the matching `slide-units/NNN-<slug>.md` plus `outline.md` for global context. **Spoken style, not the handout verbatim** — short sentences, oral connectives, no bullet-list scaffolding. Default target ~60–180 seconds (≈ 200–600 Chinese characters / 150–450 English words). Stay well below the 10 000-character TTS hard limit.
    - **Ending** (`narration/zzz-ending.md`) — thanks + Q&A invitation. Required.
 4. **STOP for narration review.** List all narration files and explicitly ask the user to review and approve. Tell them this is the cheapest revision point — past this gate, every change burns TTS API quota. Do not proceed until the user confirms. Encourage edits to tone, density, and per-page emphasis.
-5. **Synthesize audio.** Run `python scripts/synth_audio.py <course-dir>`. The script reads `audio.md`, walks `narration/*.md`, calls MINIMAX `/v1/t2a_v2`, decodes the hex audio, and writes `audio/<same-stem>.mp3`. Existing mp3 files are skipped (cache); use `--only <prefix>` to scope and `--force` to overwrite. `MINIMAX_API_KEY` must be set in the environment.
+5. **Synthesize audio.** Run `python scripts/synth_audio.py <course-dir>`. The script reads `audio.md`, walks `narration/*.md`, dispatches per the `provider` field, and writes `audio/<same-stem>.mp3`. Existing mp3 files are skipped (cache); use `--only <prefix>` to scope and `--force` to overwrite. `--provider` overrides per run.
+   - **`minimax`**: calls `/v1/t2a_v2` (sync) and decodes hex audio. Requires `MINIMAX_API_KEY` in env.
+   - **`edge`**: uses the `edge-tts` Python package (`pip install edge-tts`). No API key. If the import fails the script tells the user to install it.
 6. **Per-slide regeneration loop.** When the user reviews audio and reports issues, fix scoped:
    - Wording wrong → edit `narration/NNN-*.md` → delete `audio/NNN-*.mp3` → `python scripts/synth_audio.py <course-dir> --only NNN` → re-assemble video.
    - Voice/speed/emotion wrong globally → edit `audio.md` → delete the affected `audio/*.mp3` files → rerun synth → re-assemble.
    - Slide image wrong → that's a `codex2course` task, not this skill.
    - Handout content wrong → fix in `codex2course` (edit handout, rerun split, re-render the affected image), then update the matching narration here and re-synthesize.
    Never blanket-regenerate the whole `audio/` directory to fix a single page.
-7. **Assemble video.** Run `python scripts/assemble_video.py <course-dir>`. It pairs `slides/*.png` with `audio/*.mp3` in alphabetical order (so `000-cover` → `001-…` → `…` → `zzz-ending` is automatic), renders each page to a temp mp4 with `head_silence_sec` / `tail_silence_sec` padding from `audio.md`, then concatenates into `<course-dir>/course-video.mp4`. Output is 1920×1080, H.264, AAC, 30 fps. Requires `ffmpeg` on PATH.
+7. **Assemble video.** Run `python scripts/assemble_video.py <course-dir>`. It pairs `slides/*.png` with `audio/*.mp3` in alphabetical order (so `000-cover` → `001-…` → `…` → `zzz-ending` is automatic), renders each page to a temp mp4 with `head_silence_sec` / `tail_silence_sec` padding from `audio.md`, then concatenates into `<course-dir>/<course title>.mp4`. The course title comes from `outline.md`'s H1 (same rule as `codex2course/images2pdf.py`, so the .pdf and .mp4 land with matching names); falls back to `course-video.mp4` when no usable H1 is found. Pass `--output PATH` to override. Output is 1920×1080, H.264, AAC, 30 fps. Requires `ffmpeg` on PATH.
 8. **Final review.** Tell the user where the mp4 landed and ask them to play it through. If a single page needs fixing, return to step 6.
 
 ## Output Structure
@@ -67,20 +77,24 @@ course/
 │   ├── 001-<slug>.mp3
 │   ├── ...
 │   └── zzz-ending.mp3
-└── course-video.mp4      # final deliverable
+└── <course title>.mp4   # final deliverable, named from outline.md's H1
+                         # (falls back to course-video.mp4)
 ```
 
 **Hard rule:** filename stems must be identical across `slides/`, `narration/`, and `audio/`. Alphabetical sort is the pairing key — any mismatch silently misaligns voice and image.
 
 ## Audio Settings Template
 
-`audio.md` has three required sections:
+`audio.md` has three required sections. The `provider` field switches the TTS backend.
+
+### Variant A — MINIMAX (paid)
 
 ```markdown
 # Audio Settings
 
 ## TTS Provider
 
+- **provider:** minimax
 - **Endpoint:** https://api.minimaxi.com/v1/t2a_v2
 - **Model:** speech-01-turbo
 - **API key env var:** MINIMAX_API_KEY
@@ -103,7 +117,32 @@ course/
 - **tail_silence_sec:** 0.5
 ```
 
-`scripts/synth_audio.py` and `scripts/assemble_video.py` both read this file as their single config source. If a field is missing they fall back to the defaults above. `voice_id` is the only field with no default — ask the user.
+### Variant B — Edge TTS (free)
+
+```markdown
+# Audio Settings
+
+## TTS Provider
+
+- **provider:** edge
+
+> Uses Microsoft Edge's read-aloud TTS via the `edge-tts` Python package (`pip install edge-tts`). Free, no API key. Output is mp3 (24 kHz). `emotion`, `sample_rate`, `bitrate` keys are ignored for this provider; `speed` is mapped to edge-tts `rate` (1.0 → +0%, 1.2 → +20%, 0.8 → -20%).
+
+## Voice
+
+- **voice_id:** <e.g., zh-CN-YunxiNeural, zh-CN-XiaoxiaoNeural, en-US-AriaNeural>
+- **speed:** 1.0
+- **language:** Chinese
+
+## Video Padding
+
+- **head_silence_sec:** 0.3
+- **tail_silence_sec:** 0.5
+```
+
+> List available Edge voices with: `edge-tts --list-voices` (or `python -m edge_tts --list-voices`). Common picks: `zh-CN-YunxiNeural` (male, friendly), `zh-CN-XiaoxiaoNeural` (female, expressive), `en-US-AriaNeural`, `en-US-GuyNeural`.
+
+`scripts/synth_audio.py` and `scripts/assemble_video.py` both read this file as their single config source. If a field is missing they fall back to defaults. `voice_id` is the only field with no default — ask the user.
 
 ## Narration File Format
 
@@ -129,7 +168,7 @@ Keep it spoken — short sentences, natural connectives, no bullet lists, no mar
 | Handout content wrong | Fix in `codex2course` first (edit `handout.md`, rerun split script, re-render image), then update matching `narration/NNN-*.md`, delete its mp3, re-synth, reassemble |
 | Want to try a different voice on one page only | `python scripts/synth_audio.py <course-dir> --only NNN --voice <other-voice-id> --force` |
 
-`assemble_video.py` is cheap to rerun — it always rebuilds the full `course-video.mp4` from current `slides/` + `audio/`. There is no per-page video cache to invalidate.
+`assemble_video.py` is cheap to rerun — it always rebuilds the full `<course title>.mp4` from current `slides/` + `audio/`. There is no per-page video cache to invalidate.
 
 ## Quality Bar
 
@@ -147,7 +186,10 @@ Keep it spoken — short sentences, natural connectives, no bullet lists, no mar
 - **Filename drift between `slides/` and `narration/`.** A typo in a stem will pair the wrong audio with the wrong image and the misalignment is silent.
 - **Blanket-regenerating `audio/` to fix one page.** Use `--only <prefix>`. TTS calls cost real money.
 - **Hand-editing the `voice_id` per slide.** Default to one voice per deck. Per-page override is for the rare exception, via CLI flag, not by editing audio.md mid-deck.
-- **Forgetting to set `MINIMAX_API_KEY`.** The script fails fast with a clear message — don't paste the key into `audio.md`.
+- **Forgetting to set `MINIMAX_API_KEY`.** The script fails fast with a clear message — don't paste the key into `audio.md`. Not needed when `provider: edge`.
+- **Picking a provider silently without asking.** Cost differs significantly between `minimax` (paid, per-character) and `edge` (free). Always confirm with the user at step 2.
+- **Using a MINIMAX voice id with `provider: edge` (or vice versa).** `voice_id` is provider-specific. MINIMAX uses ids like `male-qn-qingse`; Edge uses neural-voice names like `zh-CN-YunxiNeural`. Wrong format → synthesis fails or returns empty audio.
+- **Forgetting `pip install edge-tts` when `provider: edge`.** The script exits with the install hint — install and rerun, don't switch providers as a workaround unless that's what the user wants.
 - **Re-running `synth_audio.py` without deleting the old mp3 after editing narration.** Existing files are cached; the script will skip the edited page unless you `rm` the mp3 or pass `--force`.
 - **Running this skill before `codex2course` is done.** Step 1 is a hard stop — don't try to fabricate slides.
 - **Using the async MINIMAX endpoint by reflex.** Per-page narration fits well under the sync 10 000-character limit; sync is one request per page with the audio in the response, no polling needed.

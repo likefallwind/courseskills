@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Synthesize per-slide audio from narration/*.md using MINIMAX sync TTS.
+"""Synthesize per-slide audio from narration/*.md using MINIMAX or Edge TTS.
 
 Usage:
     python synth_audio.py <course-dir> [--only PREFIX] [--force]
                                        [--voice VOICE_ID] [--speed FLOAT]
-                                       [--emotion STR]
+                                       [--emotion STR] [--provider {minimax,edge}]
 
-Reads <course-dir>/audio.md for TTS / voice settings, walks
-<course-dir>/narration/*.md, calls MINIMAX /v1/t2a_v2 (sync), and writes
+Reads <course-dir>/audio.md for provider / voice settings, walks
+<course-dir>/narration/*.md, synthesizes each, and writes
 <course-dir>/audio/<same-stem>.mp3.
+
+Providers:
+  - minimax: paid; calls https://api.minimaxi.com/v1/t2a_v2 (sync). Requires
+    $MINIMAX_API_KEY. Higher quality, supports `emotion`.
+  - edge:    free; uses Microsoft Edge's read-aloud TTS via the `edge-tts`
+    Python package (`pip install edge-tts`). No API key. `voice_id` must be
+    an Edge neural voice name, e.g. `zh-CN-YunxiNeural`, `en-US-AriaNeural`.
 
 Existing mp3 files are skipped unless --force is given. --only PREFIX
 restricts to narration files whose name starts with PREFIX.
-
-Requires: MINIMAX_API_KEY environment variable. No third-party libs.
 """
 import argparse
 import json
@@ -25,6 +30,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULTS = {
+    "provider": "minimax",
     "endpoint": "https://api.minimaxi.com/v1/t2a_v2",
     "model": "speech-2.8-turbo",
     "api_key_env": "MINIMAX_API_KEY",
@@ -76,7 +82,7 @@ def strip_h1(md: str) -> str:
     return "\n".join(lines).strip()
 
 
-def synthesize(text: str, settings: dict, api_key: str) -> bytes:
+def synthesize_minimax(text: str, settings: dict, api_key: str) -> bytes:
     payload = {
         "model": settings["model"],
         "text": text,
@@ -119,6 +125,37 @@ def synthesize(text: str, settings: dict, api_key: str) -> bytes:
     return bytes.fromhex(audio_hex)
 
 
+def synthesize_edge(text: str, settings: dict) -> bytes:
+    try:
+        import asyncio
+        import edge_tts  # type: ignore
+    except ImportError:
+        sys.exit(
+            "edge-tts not installed. Run: pip install edge-tts\n"
+            "(Edge provider uses Microsoft's free read-aloud voices — no API key.)"
+        )
+
+    # speed (1.0 = normal) -> edge-tts rate ("+0%" / "-20%" / "+25%")
+    rate_pct = int(round((float(settings["speed"]) - 1.0) * 100))
+    rate = f"{rate_pct:+d}%"
+
+    async def _run() -> bytes:
+        communicate = edge_tts.Communicate(text, settings["voice_id"], rate=rate)
+        chunks: list[bytes] = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                chunks.append(chunk["data"])
+        return b"".join(chunks)
+
+    try:
+        audio = asyncio.run(_run())
+    except Exception as e:  # edge-tts raises various network/auth errors
+        sys.exit(f"Edge TTS error: {e}")
+    if not audio:
+        sys.exit(f"Edge TTS returned no audio for voice {settings['voice_id']!r}.")
+    return audio
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("course_dir", type=Path, help="Course directory (contains audio.md, narration/, slides/)")
@@ -126,7 +163,9 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Re-synthesize even if the mp3 already exists")
     parser.add_argument("--voice", default=None, help="Override voice_id from audio.md for this run")
     parser.add_argument("--speed", type=float, default=None, help="Override speed")
-    parser.add_argument("--emotion", default=None, help="Override emotion")
+    parser.add_argument("--emotion", default=None, help="Override emotion (minimax only)")
+    parser.add_argument("--provider", choices=("minimax", "edge"), default=None,
+                        help="Override TTS provider from audio.md for this run")
     args = parser.parse_args()
 
     course = args.course_dir.resolve()
@@ -138,6 +177,8 @@ def main() -> None:
 
     cfg = parse_audio_md(course / "audio.md")
     settings = resolve_settings(cfg)
+    if args.provider:
+        settings["provider"] = args.provider
     if args.voice:
         settings["voice_id"] = args.voice
     if args.speed is not None:
@@ -147,10 +188,15 @@ def main() -> None:
     if not settings.get("voice_id") or settings["voice_id"].startswith("<"):
         sys.exit("voice_id is missing in audio.md. Set it under ## Voice (no default).")
 
-    api_key_env = settings.get("api_key_env", "MINIMAX_API_KEY")
-    api_key = os.environ.get(api_key_env)
-    if not api_key:
-        sys.exit(f"${api_key_env} is not set. Export it before running.")
+    provider = settings.get("provider", "minimax").lower()
+    api_key = None
+    if provider == "minimax":
+        api_key_env = settings.get("api_key_env", "MINIMAX_API_KEY")
+        api_key = os.environ.get(api_key_env)
+        if not api_key:
+            sys.exit(f"${api_key_env} is not set. Export it before running.")
+    elif provider != "edge":
+        sys.exit(f"Unknown provider {provider!r}. Use 'minimax' or 'edge'.")
 
     sources = sorted(p for p in narration_dir.iterdir() if p.suffix == ".md")
     if args.only:
@@ -158,8 +204,9 @@ def main() -> None:
     if not sources:
         sys.exit("No narration files matched.")
 
+    out_ext = settings.get("format", "mp3") if provider == "minimax" else "mp3"
     for src in sources:
-        out = audio_dir / f"{src.stem}.{settings['format']}"
+        out = audio_dir / f"{src.stem}.{out_ext}"
         if out.exists() and not args.force:
             print(f"skip   {out.name} (exists)")
             continue
@@ -167,8 +214,11 @@ def main() -> None:
         if not text:
             print(f"skip   {src.name} (empty)")
             continue
-        print(f"synth  {src.name} -> {out.name} ({len(text)} chars)")
-        audio = synthesize(text, settings, api_key)
+        print(f"synth  [{provider}] {src.name} -> {out.name} ({len(text)} chars)")
+        if provider == "minimax":
+            audio = synthesize_minimax(text, settings, api_key)
+        else:
+            audio = synthesize_edge(text, settings)
         out.write_bytes(audio)
 
 

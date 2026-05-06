@@ -40,10 +40,10 @@ All output (handout text, on-slide text, image text) must match the language of 
 8. **Assemble PDF.** Run `scripts/images2pdf.py` to combine all slide images in filename order into a single PDF:
 
    ```bash
-   python scripts/images2pdf.py course/slides course/course-deck.pdf
+   python scripts/images2pdf.py course/slides
    ```
 
-   The script sorts images alphabetically (`000-cover.png` → content slides → `zzz-ending.png`), so page order is always correct. Requires Pillow (`pip install Pillow`). The output path defaults to `<slides-dir>/../course-deck.pdf` if omitted.
+   The script sorts images alphabetically (`000-cover.png` → content slides → `zzz-ending.png`), so page order is always correct. Requires Pillow (`pip install Pillow`). When the output path is omitted, the script reads the H1 of `<slides-dir>/../outline.md` (stripping a leading `课程标题:` / `Course:` prefix) and writes `<slides-dir>/../<course title>.pdf`; it falls back to `course-deck.pdf` only when no usable title is found. Pass an explicit second argument to override.
 
 ## Output Structure
 
@@ -63,7 +63,7 @@ course/
 │   ├── 002-topic.png
 │   ├── ...
 │   └── zzz-ending.png
-└── course-deck.pdf
+└── <course-title>.pdf   # filename derived from outline.md's H1
 ```
 
 ## Outline Template

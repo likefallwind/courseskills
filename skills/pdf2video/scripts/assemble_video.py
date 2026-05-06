@@ -7,10 +7,12 @@ Usage:
 For each <stem>.png in <course-dir>/slides/ paired (alphabetically) with the
 matching <stem>.mp3 in <course-dir>/audio/, render a per-page mp4 (image
 held for head_silence + audio_length + tail_silence), then concat-mux the
-segments into <course-dir>/course-video.mp4.
+segments into <course-dir>/<course title>.mp4 (falls back to course-video.mp4
+when outline.md is missing or has no usable H1).
 
 Reads padding from <course-dir>/audio.md keys head_silence_sec / tail_silence_sec
-(defaults: 0.3 / 0.5).
+(defaults: 0.3 / 0.5). Course title comes from <course-dir>/outline.md's H1
+(stripping `课程标题:` / `Course:` prefix), matching codex2course/images2pdf.py.
 
 Requires: ffmpeg on PATH. No third-party libs.
 """
@@ -32,6 +34,37 @@ DEFAULTS = {
 }
 
 KEY_RE = re.compile(r"^\s*-\s*\*\*([^*]+):\*\*\s*(.+?)\s*$")
+
+# Same conventions as codex2course/scripts/images2pdf.py — keep them in sync
+# so the .pdf and .mp4 land next to each other with matching names.
+_TITLE_PREFIX = re.compile(r"^(?:课程标题|课程名称|课程|标题|title|course)\s*[:：]\s*", re.IGNORECASE)
+_FILENAME_BAD = re.compile(r'[\\/:*?"<>|\r\n\t]+')
+
+
+def extract_course_title(outline_path: Path) -> str | None:
+    if not outline_path.is_file():
+        return None
+    for line in outline_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            title = stripped[2:].strip()
+            title = _TITLE_PREFIX.sub("", title).strip()
+            return title or None
+    return None
+
+
+def sanitize_filename(name: str) -> str:
+    cleaned = _FILENAME_BAD.sub(" ", name).strip().rstrip(".")
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def default_output_path(course_dir: Path) -> Path:
+    title = extract_course_title(course_dir / "outline.md")
+    if title:
+        safe = sanitize_filename(title)
+        if safe:
+            return course_dir / f"{safe}.mp4"
+    return course_dir / "course-video.mp4"
 
 
 def parse_audio_md(path: Path) -> dict:
@@ -155,7 +188,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("course_dir", type=Path)
     parser.add_argument("--output", type=Path, default=None,
-                        help="Output mp4 path (default: <course-dir>/course-video.mp4)")
+                        help="Output mp4 path (default: <course-dir>/<course title>.mp4, "
+                             "derived from outline.md's H1; falls back to course-video.mp4)")
     args = parser.parse_args()
 
     if shutil.which("ffmpeg") is None:
@@ -171,7 +205,7 @@ def main() -> None:
 
     settings = resolve_settings(parse_audio_md(course / "audio.md"))
     pairs = pair_slides_audio(slides_dir, audio_dir)
-    output = args.output or (course / "course-video.mp4")
+    output = args.output or default_output_path(course)
 
     with tempfile.TemporaryDirectory(prefix="pdf2video-") as tmp:
         tmp_dir = Path(tmp)
