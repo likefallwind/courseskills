@@ -1,15 +1,31 @@
 ---
 name: codex2course
-description: Use when generating course handouts, lecture notes, slide-unit plans, image-based PPT pages, or PDF course decks from a course topic or outline, especially when slide visuals should be produced with Image Gen rather than .pptx shapes.
+description: Use when creating course handouts, lecture notes, workshops, tutorials, PPT-like course slides, visual lecture materials, or course PDF decks from a topic, outline, handout, or existing course package.
 ---
 
 # Codex2Course
 
 ## Overview
 
-Create a course package from a topic or outline: detailed teaching handouts first, then slide units, then one generated image per slide, then a PDF assembled from those images. The core rule is that slides are image pages, not `.pptx` files.
+Create a course package from a topic or outline: detailed teaching handouts first, then slide units, then one Imagegen-generated raster image per slide, then a PDF assembled from those images. The core rule is that slides are generated image pages, not `.pptx`, HTML, Markdown, SVG, canvas, screenshot, or locally rendered pages.
 
 **REQUIRED SUB-SKILL:** Use `imagegen` for every generated slide page, cover image, visual metaphor, diagram-like bitmap, or style variant.
+
+## Non-Negotiable Output Routing
+
+When this skill is active, `imagegen` is the only route for producing slide visuals.
+
+Allowed local scripts:
+- `scripts/split_handout.py` may derive `slide-units/` from `handout.md`.
+- `scripts/images2pdf.py` may assemble existing `slides/*.png` files into a PDF.
+
+Forbidden substitutes for slide image generation:
+- Creating `.pptx` decks with PowerPoint, LibreOffice, Keynote, or `python-pptx`
+- Rendering Marp, reveal.js, HTML/CSS, Markdown, SVG, canvas, screenshots, browser pages, or notebook output into slide images
+- Drawing slide pages with Pillow, matplotlib, reportlab, Mermaid, Graphviz, or other deterministic local renderers
+- Generating placeholders, templates, or code-native diagrams instead of final Imagegen slide images
+
+If `imagegen` is unavailable, blocked, or unsuitable for a requested slide deck, stop and tell the user that this skill cannot produce the visual deck through its required path. Do not silently fall back to local PPT/rendering workflows unless the user explicitly changes the requirement to an editable `.pptx` or a deterministic locally rendered deck.
 
 ## When to Use
 
@@ -20,6 +36,8 @@ Use this skill for:
 - Regenerating individual unsatisfactory pages from revised slide units
 
 Do not use this skill when the user specifically needs editable `.pptx`; use `pptx` instead.
+
+If the user says "PPT", "slides", "deck", or "课件" without explicitly asking for an editable `.pptx` file, treat the request as an image-page course deck and follow this skill's Imagegen path.
 
 ## Workflow
 
@@ -32,13 +50,13 @@ All output (handout text, on-slide text, image text) must match the language of 
 3. **Write the handout.** Produce knowledge-point explanations that are detailed enough for learning but not a word-for-word script. Prioritize logic, terminology, examples, and order.
 4. **STOP for human revision.** Output the handout and explicitly ask the user to review and approve it. Do not proceed to slide units until the user confirms. Encourage edits to content logic, terminology, emphasis, and teaching sequence.
 5. **Annotate handout with slide markers, then materialize slide units.** Insert `<!-- slide: 标题 -->` markers at the points in `handout.md` where each slide should begin (see Slide Marker Convention below). This is the key human decision in this stage — present the resulting slide list to the user for review before moving on. Then run `python scripts/split_handout.py course/handout.md` to mechanically materialize `course/slide-units/NNN-slug.md`. The script is the single way to produce slide-units; never hand-author or hand-edit those files. If `handout.md` is later edited, rerun the script to refresh `slide-units/` before regenerating any image.
-6. **Generate slide images.** Reuse the course-level prefix from `outline.md`'s `## Image Generation Settings` verbatim for every imagegen call. Generate three groups in this order:
+6. **Generate slide images with `imagegen` only.** Before generating the first slide image, load the `imagegen` skill and use its built-in tool path unless the user explicitly selected its CLI fallback. Reuse the course-level prefix from `outline.md`'s `## Image Generation Settings` verbatim for every imagegen call. Do not create a local-rendered intermediate deck or screenshot source. Generate three groups in this order:
    - **Cover** → `slides/000-cover.png`. Content payload built from `## Course Info` (course title from `outline.md`'s H1, instructor, institution, target audience as a tone cue), with an explicit instruction that this is the deck's cover.
    - **Content** → `slides/NNN-slug.png`, mirroring `slide-units/` filenames 1:1. For each slide-unit file, payload is the file's verbatim content.
    - **Ending** → `slides/zzz-ending.png`. Short closing slide (e.g., "谢谢 / Q&A" in the course language). Custom ending text can be added by the user in `## Image Generation Settings`.
    - If the full deck has more than 10 images (cover + content + ending), use the Sequential Sub-Agent Batching protocol below for content slides. Generate cover and ending slides separately because their layouts intentionally differ from normal content slides.
 7. **Batch review, then targeted regeneration.** After all slides (cover + content + ending) are generated, present the deck to the user for review in one pass. The user identifies which specific slides need changes and provides per-slide revision feedback. Regenerate only those slides, one at a time, by re-running `imagegen` with the same prefix + payload plus the user's revision note appended. Overwrite the same `slides/` filename so PDF assembly picks up the latest version. Never regenerate a slide without an explicit per-slide instruction from the user. If the user's feedback is actually about content (not visuals) for a content slide, edit `handout.md` and rerun the split script first; for cover/ending content fixes, edit `outline.md`.
-8. **Assemble PDF.** Run `scripts/images2pdf.py` to combine all slide images in filename order into a single PDF:
+8. **Assemble PDF from Imagegen outputs.** Run `scripts/images2pdf.py` to combine the existing Imagegen-created slide images in filename order into a single PDF. This script is only an assembler; it must not replace or create slide visuals:
 
    ```bash
    python scripts/images2pdf.py course/slides
@@ -58,7 +76,7 @@ course/
 │   ├── 001-title.md
 │   ├── 002-topic.md
 │   └── ...
-├── slides/             # cover + content (mirrors slide-units/ 1:1) + ending
+├── slides/             # Imagegen-created cover + content (mirrors slide-units/ 1:1) + ending
 │   ├── 000-cover.png
 │   ├── 001-title.png
 │   ├── 002-topic.png
@@ -146,6 +164,8 @@ It clears stale `NNN-*.md` files in the output directory and rewrites all slides
 
 ## Imagegen Call Pattern
 
+Before the first call, read and follow the `imagegen` skill. In ordinary use, this means the built-in `image_gen` tool, one call per final slide image, then move/copy the selected output into `slides/` using the exact filename below. The prompt payload is not a recipe for local rendering.
+
 Each `imagegen` call has two parts in this order:
 
 1. **Course-level prefix** — pulled verbatim from `outline.md`'s `## Image Generation Settings` (course brief, art style, resolution, language). Reused unchanged across every slide (cover, content, ending). Do not re-derive per call.
@@ -157,7 +177,7 @@ Each `imagegen` call has two parts in this order:
 | Content (`NNN-slug.png`) | The slide-unit file's verbatim contents |
 | Ending (`zzz-ending.png`) | An explicit ending-instruction line + the optional ending text from `## Image Generation Settings`, defaulting to "谢谢 / Q&A" in the course language |
 
-Do not over-structure the prompt — `gpt-image-2` handles composition, layout, and visual metaphor on its own. When regenerating a single slide in step 7, append the user's per-slide revision note after the payload. Keep the prefix unchanged.
+Do not over-structure the prompt — `gpt-image-2` handles composition, layout, and visual metaphor on its own. Do not translate this prompt into HTML, PPT, SVG, chart code, or any other local renderer. When regenerating a single slide in step 7, append the user's per-slide revision note after the payload. Keep the prefix unchanged.
 
 ## Sequential Sub-Agent Batching
 
@@ -235,6 +255,7 @@ For targeted regeneration handled by a sub-agent, use a visual anchor from the s
 ## Common Mistakes
 
 - **Generating `.pptx` by habit.** This workflow produces image pages plus PDF unless the user explicitly asks for editable `.pptx`.
+- **Using local rendering because it feels more deterministic.** Local HTML/PPT/SVG/canvas/render-to-PNG workflows violate this skill's visual-generation contract. Use `imagegen`, or stop and ask the user to approve a different deliverable.
 - **Skipping the handout review.** Slide units should reflect the reviewed teaching logic. Step 4 is a hard stop.
 - **Drifting from the confirmed outline** when writing the handout or slicing slide units.
 - **Over-structuring the imagegen prompt.** Passing only the course-level prefix + the verbatim slide-unit content beats elaborate prompt scaffolds.
