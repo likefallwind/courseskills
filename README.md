@@ -8,6 +8,7 @@
 | **codex2course** | Topic / outline → handout → slide images → PDF |
 | **pdf2video** | Slide deck → per-slide narration → TTS audio → mp4 |
 | **makecourse** | Orchestration skill for agents — chains the three skills above end-to-end via `codex exec` |
+| **movecourse** | Publish generated lesson mp4 files into the aistudy101 website `course-assets` tree |
 
 Each skill can be installed and used independently. `pdf2video` assumes the output layout produced by `codex2course`. `makecourse` is intended for automation agents (e.g. openclaw, hermes) that drive the full pipeline by shelling out to the `codex` CLI.
 
@@ -24,6 +25,7 @@ npx skills add likefallwind/courseskills --skill ai-tutorials
 npx skills add likefallwind/courseskills --skill codex2course
 npx skills add likefallwind/courseskills --skill pdf2video
 npx skills add likefallwind/courseskills --skill makecourse
+npx skills add likefallwind/courseskills --skill movecourse
 ```
 
 ### All skills
@@ -51,6 +53,10 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
 # makecourse
 curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/makecourse/SKILL.md \
   -o ~/.claude/skills/makecourse.md
+
+# movecourse
+curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/movecourse/SKILL.md \
+  -o ~/.claude/skills/movecourse.md
 ```
 
 </details>
@@ -87,6 +93,11 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
 - [Codex CLI](https://github.com/openai/codex) on `PATH` — the skill drives the pipeline by shelling out to `codex exec`.
 - Run from an agent runtime that can execute shell commands (openclaw, hermes, scheduled bots, etc.). It is not designed for direct human invocation — call the inner skills directly instead.
 
+### movecourse
+
+- An AI-generated course directory containing `lessonN/*.mp4` files.
+- The aistudy101 website checkout at `/home/likefallwind/code/aistudy101-website`.
+
 ---
 
 ## Usage
@@ -105,9 +116,12 @@ Turn the course in ./course/ into a narrated lecture video, voice: male-qn-qings
 
 # Full pipeline
 Design a Vibe Coding course, then build slides and produce a narrated mp4.
+
+# Publish generated videos
+Move this generated course to aistudy101 course-assets as ai-enlightenment.
 ```
 
-All four skills are incremental — they inspect what already exists and pick up at the next missing stage, so you can stop, review, and resume without redoing approved work.
+These skills are incremental — they inspect what already exists and pick up at the next missing stage, so you can stop, review, and resume without redoing approved work.
 
 ### Agent-driven full pipeline (`makecourse`)
 
@@ -147,7 +161,7 @@ course/
 
 ## Scripts
 
-Both skills ship helper scripts used internally — you can also run them directly:
+Several skills ship helper scripts used internally — you can also run them directly:
 
 | Script | Purpose |
 |---|---|
@@ -155,10 +169,12 @@ Both skills ship helper scripts used internally — you can also run them direct
 | `skills/codex2course/scripts/images2pdf.py` | Combine `slides/*.png` into a PDF |
 | `skills/pdf2video/scripts/synth_audio.py` | Call MINIMAX TTS for each narration file |
 | `skills/pdf2video/scripts/assemble_video.py` | Pair slides + audio into `course-video.mp4` |
+| `skills/movecourse/scripts/movecourse.py` | Copy or move `lessonN/*.mp4` into website course-assets |
 
 ```bash
 python skills/codex2course/scripts/split_handout.py course/handout.md
 python skills/codex2course/scripts/images2pdf.py course/slides course/course-deck.pdf
 python skills/pdf2video/scripts/synth_audio.py course/
 python skills/pdf2video/scripts/assemble_video.py course/
+python skills/movecourse/scripts/movecourse.py --course ai-enlightenment --source course/ --dry-run
 ```
