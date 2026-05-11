@@ -45,7 +45,7 @@ Each stage below is independently invocable. Inspect what artifacts already exis
 
 All output (handout text, on-slide text, image text) must match the language of the user's input.
 
-1. **Identify entry point and confirm input state.** Accept a course topic, rough outline, existing handout, finalized slide units, or a generated deck that needs targeted regeneration. If you will need to write or extend `outline.md`, also gather any missing metadata up front: instructor, institution, target audience, course goal, art style preference (ask the user for whatever is missing).
+1. **Identify entry point, confirm input state, and preflight Git ownership.** Accept a course topic, rough outline, existing handout, finalized slide units, or a generated deck that needs targeted regeneration. If you will need to write or extend `outline.md`, also gather any missing metadata up front: instructor, institution, target audience, course goal, art style preference (ask the user for whatever is missing). If the output directory is inside a Git repository, inspect the target paths before writing (`outline.md`, `handout.md`, `slide-units/`, `slides/`, final PDF path). Treat files or directories that already exist or are already tracked as pre-existing repository content unless the user explicitly says Codex2Course owns them. Do not overwrite, hide, or add ignore rules for pre-existing content by default; choose a fresh course subdirectory or ask the user how to proceed if there is a collision.
 2. **Generate or refine the outline.** Use the structured template in the Outline Template section below — three required sections: `## Course Info` (cover-slide source), `## Outline` (drives handout writing), `## Image Generation Settings` (imagegen prefix source). Organize the outline body by dependency, teaching rhythm, and difficulty. Ask for confirmation before writing full content unless the user asked for a full draft in one pass.
 3. **Write the handout.** Produce knowledge-point explanations that are detailed enough for learning but not a word-for-word script. Prioritize logic, terminology, examples, and order.
 4. **STOP for human revision.** Output the handout and explicitly ask the user to review and approve it. Do not proceed to slide units until the user confirms. Encourage edits to content logic, terminology, emphasis, and teaching sequence.
@@ -56,13 +56,15 @@ All output (handout text, on-slide text, image text) must match the language of 
    - **Ending** → `slides/zzz-ending.png`. Short closing slide (e.g., "谢谢 / Q&A" in the course language). Custom ending text can be added by the user in `## Image Generation Settings`.
    - If the full deck has more than 10 images (cover + content + ending), use the Sequential Sub-Agent Batching protocol below for content slides. Generate cover and ending slides separately because their layouts intentionally differ from normal content slides.
 7. **Batch review, then targeted regeneration.** After all slides (cover + content + ending) are generated, present the deck to the user for review in one pass. The user identifies which specific slides need changes and provides per-slide revision feedback. Regenerate only those slides, one at a time, by re-running `imagegen` with the same prefix + payload plus the user's revision note appended. Overwrite the same `slides/` filename so PDF assembly picks up the latest version. Never regenerate a slide without an explicit per-slide instruction from the user. If the user's feedback is actually about content (not visuals) for a content slide, edit `handout.md` and rerun the split script first; for cover/ending content fixes, edit `outline.md`.
-8. **Assemble PDF from Imagegen outputs.** Run `scripts/images2pdf.py` to combine the existing Imagegen-created slide images in filename order into a single PDF. This script is only an assembler; it must not replace or create slide visuals:
+8. **Assemble PDF from Imagegen outputs and keep only the PDF commit-ready.** Run `scripts/images2pdf.py` to combine the existing Imagegen-created slide images in filename order into a single PDF. This script is only an assembler; it must not replace or create slide visuals:
 
    ```bash
    python scripts/images2pdf.py course/slides
    ```
 
    The script sorts images alphabetically (`000-cover.png` → content slides → `zzz-ending.png`), so page order is always correct. Requires Pillow (`pip install Pillow`). When the output path is omitted, the script reads the H1 of `<slides-dir>/../outline.md` (stripping a leading `课程标题:` / `Course:` prefix) and writes `<slides-dir>/../<course title>.pdf`; it falls back to `course-deck.pdf` only when no usable title is found. Pass an explicit second argument to override.
+
+   If the course package lives inside a Git repository, update that repository's `.gitignore` using the Repository Hygiene rules below before committing or publishing anything. Verify that generated intermediates are ignored and the final PDF is still visible to Git.
 
 ## Output Structure
 
@@ -84,6 +86,37 @@ course/
 │   └── zzz-ending.png
 └── <course-title>.pdf   # filename derived from outline.md's H1
 ```
+
+## Repository Hygiene
+
+When generating a course package inside any Git repository, keep only Codex2Course-created intermediate artifacts local. Commit the final PDF deliverable and any `.gitignore` change needed to hide those generated intermediates. Never hide unrelated files that were already part of the target repository.
+
+Definition:
+
+- A Codex2Course-generated intermediate is a path this skill created during the current run, or a path the user explicitly identifies as prior Codex2Course output.
+- Pre-existing repository content includes anything that existed before the current run or is already tracked by Git, even if its name is `outline.md`, `handout.md`, `slide-units/`, or `slides/`.
+
+Rules:
+
+- Update the `.gitignore` in the target repository where the course content is being generated. Do not modify this skills repository's `.gitignore` unless it is actually the target output repo.
+- Before adding ignore rules, check candidate paths with Git and the filesystem, for example `git ls-files -- <path>` plus a normal existence check. If a candidate path already existed or is tracked, do not ignore it unless the user explicitly confirms it is Codex2Course output that should stay local.
+- Add ignore rules only for the exact generated intermediate paths that Codex2Course created or owns. Do not blindly ignore every `outline.md`, `handout.md`, `slide-units/`, or `slides/` path just because those names appear in the output structure.
+- Use path-scoped ignore rules for the actual generated paths. Do not add broad rules like `**/slides/` or `**/outline.md` unless the user explicitly wants those ignored across the whole repo.
+- Do not ignore the final assembled PDF in the course directory. If an existing ignore rule hides PDFs or the course directory, add the necessary negation rules so the final PDF remains trackable.
+- If the intended course output directory contains unrelated pre-existing content, prefer a fresh dedicated subdirectory for the Codex2Course package instead of mixing generated intermediates into that directory.
+- If the user explicitly asks to preserve source files in Git, narrow or skip the ignore block to match that request.
+
+Build the ignore block from the generated-path inventory. Example only when all four paths are newly created or explicitly owned by Codex2Course:
+
+```gitignore
+# Codex2Course generated intermediates for <course-dir>/
+<course-dir>/outline.md
+<course-dir>/handout.md
+<course-dir>/slide-units/
+<course-dir>/slides/
+```
+
+If only some intermediates were generated, include only those lines. Before final handoff, check the target repo state. `git status --short -- <course-dir>` should show the final PDF and should not hide pre-existing repository content. If the final PDF is missing because it is ignored, inspect with `git check-ignore -v <course-dir>/<course-title>.pdf` and adjust `.gitignore` with path-specific `!` rules until the PDF is trackable.
 
 ## Outline Template
 

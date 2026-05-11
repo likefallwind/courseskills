@@ -53,7 +53,7 @@ All narration text must match the language of the slides / handout.
    - Handout content wrong → fix in `codex2course` (edit handout, rerun split, re-render the affected image), then update the matching narration here and re-synthesize.
    Never blanket-regenerate the whole `audio/` directory to fix a single page.
 7. **Assemble video.** Run `python scripts/assemble_video.py <course-dir>`. It pairs `slides/*.png` with `audio/*.mp3` in alphabetical order (so `000-cover` → `001-…` → `…` → `zzz-ending` is automatic), renders each page to a temp mp4 with `head_silence_sec` / `tail_silence_sec` padding from `audio.md`, then concatenates into `<course-dir>/<course title>.mp4`. The course title comes from `outline.md`'s H1 (same rule as `codex2course/images2pdf.py`, so the .pdf and .mp4 land with matching names); falls back to `course-video.mp4` when no usable H1 is found. Pass `--output PATH` to override. Output is 1920×1080, H.264, AAC, 30 fps. Requires `ffmpeg` on PATH.
-8. **Final review.** Tell the user where the mp4 landed and ask them to play it through. If a single page needs fixing, return to step 6.
+8. **Final review and ignore generated products.** Tell the user where the mp4 landed and ask them to play it through. If the course directory or output video path is inside a Git repository, update that repository's `.gitignore` using the Repository Hygiene rules below so all pdf2video products stay local. If a single page needs fixing, return to step 6.
 
 ## Output Structure
 
@@ -82,6 +82,28 @@ course/
 ```
 
 **Hard rule:** filename stems must be identical across `slides/`, `narration/`, and `audio/`. Alphabetical sort is the pairing key — any mismatch silently misaligns voice and image.
+
+## Repository Hygiene
+
+When running pdf2video inside any Git repository, ignore every pdf2video-generated product because narration, audio, and video files are large and reproducible from the upstream course package.
+
+Rules:
+
+- Update the `.gitignore` in the target repository where pdf2video outputs are generated. Do not modify this skills repository's `.gitignore` unless it is actually the target output repo.
+- Ignore only pdf2video products: `audio.md`, `narration/`, `audio/`, and the generated `.mp4` output path. Do not ignore upstream `codex2course` inputs such as `outline.md`, `handout.md`, `slide-units/`, `slides/`, or the PDF deck as part of this skill.
+- Use path-scoped ignore rules for the actual course directory and video output. Do not add broad rules like `*.mp4`, `audio/`, or `narration/` across the whole repo unless the user explicitly asks for repo-wide ignores.
+- If `assemble_video.py --output PATH` writes the video outside the course directory, add an exact ignore rule for that output path too.
+- Before final handoff, check that `git status --short -- <course-dir>` does not show pdf2video products. If the mp4 was written outside `<course-dir>`, check that path separately.
+
+Preferred block, with `<course-dir>` replaced by the course package path relative to the target repo root:
+
+```gitignore
+# pdf2video generated products for <course-dir>/
+<course-dir>/audio.md
+<course-dir>/narration/
+<course-dir>/audio/
+<course-dir>/*.mp4
+```
 
 ## Audio Settings Template
 
