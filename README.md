@@ -7,10 +7,10 @@
 | **ai-tutorials** | Design AI course syllabus, lectures, and hands-on projects |
 | **codex2course** | Topic / outline → handout → slide images → PDF |
 | **pdf2video** | Slide deck → per-slide narration → TTS audio → mp4 |
-| **makecourse** | Orchestration skill for agents — chains the three skills above end-to-end via `codex exec` |
-| **movecourse** | Publish generated lesson mp4 files into the aistudy101 website `course-assets` tree |
+| **makecourse** | Publish existing course repos to aistudy101 and orchestrate the full generation pipeline when artifacts are missing |
+| **movecourse** | Low-level video-only helper for copying generated lesson mp4 files into the website `course-assets` tree |
 
-Each skill can be installed and used independently. `pdf2video` assumes the output layout produced by `codex2course`. `makecourse` is intended for automation agents (e.g. openclaw, hermes) that drive the full pipeline by shelling out to the `codex` CLI.
+Each skill can be installed and used independently. `pdf2video` assumes the output layout produced by `codex2course`. `makecourse` can be used directly from an existing course repo for website publishing, and can also drive the full generation pipeline by shelling out to the `codex` CLI when artifacts are missing.
 
 ---
 
@@ -89,9 +89,8 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
 
 ### makecourse
 
-- Everything above (the inner skills must be installed and reachable to `codex`).
-- [Codex CLI](https://github.com/openai/codex) on `PATH` — the skill drives the pipeline by shelling out to `codex exec`.
-- Run from an agent runtime that can execute shell commands (openclaw, hermes, scheduled bots, etc.). It is not designed for direct human invocation — call the inner skills directly instead.
+- For publishing existing courses: a local course repository with `lessonN/` folders and the aistudy101 website checkout at `/home/likefallwind/code/aistudy101-website`.
+- For generating missing artifacts: everything above, plus the inner skills installed and [Codex CLI](https://github.com/openai/codex) on `PATH`.
 
 ### movecourse
 
@@ -117,15 +116,25 @@ Turn the course in ./course/ into a narrated lecture video, voice: male-qn-qings
 # Full pipeline
 Design a Vibe Coding course, then build slides and produce a narrated mp4.
 
-# Publish generated videos
-Move this generated course to aistudy101 course-assets as ai-enlightenment.
+# Publish an existing course repo
+Publish this course repo to aistudy101.
+
+# Publish generated videos only
+Move only this generated course's videos to aistudy101 course-assets as ai-enlightenment.
 ```
 
 These skills are incremental — they inspect what already exists and pick up at the next missing stage, so you can stop, review, and resume without redoing approved work.
 
-### Agent-driven full pipeline (`makecourse`)
+### Course publishing and full pipeline (`makecourse`)
 
-When an automation agent (openclaw, hermes, …) needs to produce a full course unattended, it should load the `makecourse` skill and shell out to the Codex CLI per stage:
+When an existing course repo should appear on the website, run `makecourse` from the course root. It first wires `course-sources.yaml` for lesson text and `course-assets.local.yaml` for local generated videos:
+
+```bash
+python ~/.agents/skills/makecourse/scripts/publish_course.py --source . --dry-run
+python ~/.agents/skills/makecourse/scripts/publish_course.py --source . --write-course-yaml
+```
+
+When an automation agent (openclaw, hermes, …) needs to produce missing courseware first, it should load the same skill and shell out to the Codex CLI per stage:
 
 ```bash
 codex exec --cd ./course --sandbox workspace-write \

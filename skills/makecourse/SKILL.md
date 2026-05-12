@@ -1,210 +1,178 @@
 ---
 name: makecourse
-description: Use when an agent (e.g. openclaw, hermes) is asked to produce a complete narrated course end-to-end from a topic or rough outline — handout + slide deck + lecture video. The agent drives the pipeline by shelling out to the `codex` CLI, which in turn invokes `ai-tutorials`, `codex2course`, and `pdf2video` in that order.
+description: Use when publishing an existing AI course repository into the aistudy101 website, wiring course registry/local asset config, syncing lesson text and generated videos, or orchestrating full course generation from topic to handout/slides/video.
 ---
 
 # Makecourse
 
 ## Overview
 
-`makecourse` is an **orchestration skill for agents** (openclaw, hermes, or any agent that can run shell commands). It does not write course content itself. Instead it tells the agent how to chain three existing Codex skills via the `codex` CLI:
+`makecourse` has two modes:
 
-1. **`ai-tutorials`** → writes the lecture material (`introduction.md`, `syllabus.md`, `lesson{i}/{outline,handout,project}.md`).
-2. **`codex2course`** → turns a per-lesson handout into a slide deck (`slide-units/`, `slides/*.png`, `<title>.pdf`).
-3. **`pdf2video`** → turns the deck into a narrated mp4 (`narration/`, `audio/`, `<title>.mp4`).
+1. **Publish an existing course repo to aistudy101**: run from a repo like `.../course-outline/stage2/03-ai-concept`; register it in the website, wire local generated videos, run sync, and verify the learning page has lesson text plus video entries.
+2. **Generate missing courseware**: when starting from a topic or rough outline, call `ai-tutorials`, `codex2course`, and `pdf2video` through `codex exec` to create handouts, slide decks, and narrated videos.
 
-The agent stays the orchestrator. Each stage runs in its own `codex exec` invocation so the heavy lifting (file I/O, image generation, TTS, ffmpeg) happens inside Codex with the right skill loaded.
+Default to publishing mode when the current directory already contains `lessonN/` folders. Do not treat publishing as "copy videos only": the website needs both `course-sources.yaml` for lesson text and `course-assets.local.yaml` for generated media that lives outside the remote repo layout.
 
-**Core rule:** never reimplement the inner skills. Just call `codex exec` with a focused prompt and the stage's working directory, then verify the expected output files exist before moving on.
+## Publishing Existing Courses
 
-## When to Use
+### What the Website Reads
 
-Use this skill when:
-- A user (or upstream agent task) asks for a "complete course", "narrated lecture", "AI 课程视频", "讲义+课件+视频", or similar full-pipeline deliverable.
-- You are an automation agent (openclaw, hermes, scheduled bot) that needs to produce courseware unattended.
-- You already have a topic, rough outline, or a partially-built course directory and need to fill in the remaining stages.
+The aistudy101 website builds a course from two places:
 
-Do **not** use this skill when:
-- The user only wants one stage (just a handout, just slides, just a video). Call that single skill directly via `codex exec` instead.
-- The user wants a live human-in-the-loop tutorial design session — the inner skills have hard stops for review (`ai-tutorials` Step 3/5, `codex2course` Step 4, `pdf2video` Step 4) that this orchestration must respect; running fully unattended will violate those stops unless the user has explicitly authorized auto-approval.
-- The environment has no `codex` CLI on PATH or no API credentials configured.
+- `course-sources.yaml`: remote repo metadata. Sync clones the repo and reads `README.md`, `introduction.md`, `syllabus.md`, `lesson*/outline.md`, `lesson*/handout.md`, and `lesson*/project.md`.
+- `course-assets.local.yaml`: local generated media. Use this when videos are in `lesson*/deck/*.mp4` or another local-only render directory. Sync copies them to `static/course-assets/<course-id>/<lesson-id>/video/<lesson-id>-intro.mp4`.
 
-## Pipeline Contract
+If lesson text is local but not pushed to the remote repo, website sync will not see it. Commit and push source-repo content before expecting new text to appear on the site. Local video files do not need to be pushed if `course-assets.local.yaml` points to them.
 
-```
-┌─ Stage 1: ai-tutorials ─┐   ┌─ Stage 2: codex2course ─┐   ┌─ Stage 3: pdf2video ─┐
-│ topic / outline         │ → │ lesson{i}/handout.md    │ → │ <course-title>.pdf   │ → <course-title>.mp4
-│ → introduction.md       │   │ → outline.md            │   │ → narration/         │
-│ → syllabus.md           │   │ → slide-units/          │   │ → audio/             │
-│ → lesson{i}/handout.md  │   │ → slides/*.png          │   │ → <course-title>.mp4 │
-│ → lesson{i}/project.md  │   │ → <course-title>.pdf    │   │                      │
-└─────────────────────────┘   └─────────────────────────┘   └──────────────────────┘
-```
+### Inputs to Infer
 
-The directory layouts of the three skills do not match perfectly: `ai-tutorials` organizes content by `lesson{i}/`, while `codex2course` and `pdf2video` operate on a single course directory with `outline.md` + `handout.md` at its root. The agent must reconcile this — see "Per-lesson loop" below.
+Infer these before asking the user:
 
-## Required inputs
-
-Gather from the calling context before running anything:
-
-| Field | Required? | Notes |
-|---|---|---|
-| Course topic / title | yes | Free-form; `ai-tutorials` will turn it into `introduction.md` |
-| Workspace directory | yes | All three stages run with this as cwd; create it empty if it doesn't exist |
-| Per-lesson scope | yes | Either "all lessons in syllabus" or an explicit list like `lesson1,lesson3` |
-| TTS provider | yes | `edge` (free, default) or `minimax` (paid). `pdf2video` will ask if not set |
-| Voice id | recommended | Provider-specific. Skip → `pdf2video` will ask |
-| Auto-approve human gates | optional | If true, the orchestrator bypasses inner-skill review stops. Default: false |
-
-If any required field is missing, ask the user once before starting — do not start a stage with placeholder data, since the inner skills will then ask the user themselves and the orchestration will deadlock.
-
-## Workflow
-
-Each stage is independently invocable. Inspect the workspace and skip stages whose outputs already exist — the inner skills are themselves resumable, but skipping the outer call saves a `codex` round-trip.
-
-### Stage 0 — Preflight
-
-Before stage 1, verify:
-
-- `command -v codex` succeeds. If not, abort with a message asking the user to install Codex CLI.
-- `<workspace>` exists or can be created.
-- For each inner skill referenced below, confirm the skill is installed (`ls ~/.agents/skills/<name>/SKILL.md` or `ls ~/.claude/skills/<name>/SKILL.md`). If missing, surface the gap to the user — do not try to run the pipeline anyway.
-
-### Stage 1 — Generate handout via `ai-tutorials`
-
-Invoke Codex with a prompt that names the skill explicitly so it loads:
-
-```bash
-codex exec \
-  --cd "<workspace>" \
-  --sandbox workspace-write \
-  "Use the ai-tutorials skill to generate a complete course on the topic:
-  '<COURSE_TOPIC>'.
-  Target audience: <AUDIENCE>.
-  Total lessons: <N>.
-  Run all of Step 0 through Step 7 of the ai-tutorials workflow.
-  When you reach a confirmation gate (knowledge points, syllabus), $GATE_INSTRUCTION.
-  Stop after Step 7. Do not run Step 8 (cover images) — the orchestrator handles cover images downstream."
-```
-
-Where `$GATE_INSTRUCTION` is one of:
-
-- Default (human in the loop): `"stop and print the artifact path so the orchestrator can relay it to the user for approval"`.
-- Auto-approve mode: `"proceed automatically using your best judgment; do not pause for confirmation"`. Only set this when the calling user has explicitly authorized it.
-
-**Verify** before continuing:
-
-```bash
-test -f "<workspace>/syllabus.md" \
-  && ls "<workspace>"/lesson*/handout.md
-```
-
-If the syllabus or any expected `lesson{i}/handout.md` is missing, do **not** proceed — re-invoke stage 1 with `"continue from where you stopped per Step 0 detection"` instead.
-
-### Stage 2 — Build slide deck per lesson via `codex2course`
-
-`codex2course` operates on a single course directory containing `outline.md` and `handout.md` at its root. The `ai-tutorials` output uses `lesson{i}/handout.md` per lesson. Treat **each lesson as its own codex2course course**.
-
-Per-lesson loop (run sequentially, not in parallel — image generation is heavy):
-
-```bash
-for LESSON in <selected lessons>; do
-  LESSON_DIR="<workspace>/${LESSON}"
-
-  codex exec \
-    --cd "$LESSON_DIR" \
-    --sandbox workspace-write \
-    "Use the codex2course skill on this directory.
-    The lesson handout already exists at handout.md and the lesson outline at outline.md.
-    Treat the existing outline.md as the codex2course outline (extend it to include the
-    three required sections: Course Info, Outline, Image Generation Settings — ask the
-    user only for fields you cannot infer from ../introduction.md or ../studentprofile.md).
-    Run from Step 5 (slide marker annotation) through Step 8 (PDF assembly).
-    Use sequential sub-agent batching if there are more than 10 slides."
-
-  # Verify
-  test -d "$LESSON_DIR/slide-units" \
-    && ls "$LESSON_DIR"/slides/000-cover.png "$LESSON_DIR"/slides/zzz-ending.png \
-    && ls "$LESSON_DIR"/*.pdf
-done
-```
-
-Notes:
-
-- `codex2course` itself is resumable — if `slide-units/` exists it will skip earlier steps. The orchestrator does not need to track stage progress beyond "did the PDF land?".
-- The `Course Info` block in `outline.md` should reuse `introduction.md` (instructor, institution, target audience). If those are absent, the inner skill will ask — relay the question to the user or fail hard in unattended mode.
-- Do **not** run two `codex2course` invocations in parallel against different lessons unless you have confirmed the image-generation backend tolerates it. Default: serial.
-
-### Stage 3 — Render narrated video per lesson via `pdf2video`
-
-For every lesson directory that completed stage 2 successfully:
-
-```bash
-for LESSON in <selected lessons>; do
-  LESSON_DIR="<workspace>/${LESSON}"
-
-  codex exec \
-    --cd "$LESSON_DIR" \
-    --sandbox workspace-write \
-    "Use the pdf2video skill on this directory.
-    TTS provider: <edge|minimax>.
-    Voice id: <voice_id>.
-    Speed: <speed, default 1.0>.
-    Run from Step 1 (sanity-check) through Step 8 (final review).
-    When you reach the narration review gate (Step 4), $GATE_INSTRUCTION."
-
-  # Verify
-  ls "$LESSON_DIR"/*.mp4
-done
-```
-
-The mp4 filename comes from the lesson's `outline.md` H1 (same rule as `codex2course`). If the H1 was extended to a course title rather than the lesson title, the filenames will reflect that — adjust upstream if you need lesson-titled outputs.
-
-### Stage 4 — Aggregate
-
-After all lessons complete:
-
-- Collect every `<workspace>/lesson*/*.mp4` and every `<workspace>/lesson*/*.pdf`.
-- Print a manifest to the calling user (or upstream agent) listing:
-  - Course root directory
-  - Per-lesson PDF and MP4 paths
-  - Total lessons completed vs requested
-  - Any lessons that failed and at which stage
-- If any lesson failed, surface that explicitly. Do not silently skip.
-
-## Codex invocation reference
-
-| Flag | Why this orchestrator uses it |
+| Field | Source |
 |---|---|
-| `codex exec` | Non-interactive subcommand. Always use `exec`, never the interactive top-level form, when called from another agent. |
-| `--cd <dir>` | Sets the working directory the inner skills will see. All three skills key off cwd to find / write artifacts. |
-| `--sandbox workspace-write` | Inner skills need to create files (`syllabus.md`, `slides/`, `audio/`, mp4). `read-only` will break stage 1 immediately. Use `danger-full-access` only if a stage needs to install ffmpeg or `edge-tts` and the calling user has authorized it. |
-| `-m <model>` | Optional. The default model is fine for handout writing; consider a smaller model for cheap stages and a larger one for image-prompt synthesis. Leave unset unless cost is a constraint. |
-| `--add-dir <other>` | Use when the inner stage needs to read a sibling directory (e.g., a shared `studentprofile.md` outside the workspace). Otherwise omit. |
-| `-c <key=value>` | Avoid in the orchestrator unless tuning is necessary. Profile drift between stages causes hard-to-debug failures. |
+| Course root | Current directory or nearest parent containing `lessonN/` |
+| Website root | `/home/likefallwind/code/aistudy101-website` unless user says otherwise |
+| Course id | `course.yaml:id`, else folder name with leading `NN-` removed, e.g. `03-ai-concept` -> `ai-concept` |
+| Repo URL | `git remote get-url origin`, converted from `git@gitee.com:owner/repo.git` to HTTPS |
+| Branch | `git branch --show-current`, default `master` |
+| Title | `course.yaml:title`, first H1 in `README.md`, `introduction.md`, or `syllabus.md` |
+| Stage | path segment (`stage1` -> 小学, `stage2` -> 初中, `stage3` -> 高中), else course text |
+| Hours | `总课时：N 节` from course text, else number of `lessonN/` folders |
+| Video globs | `lesson*/deck/*.mp4`, `lesson*/video/*.mp4`, `lesson*/*.mp4` |
 
-Pass the prompt as a single argument string (not stdin) so quoting and newlines are explicit. For long prompts, store them in a file and pipe via stdin: `codex exec --cd "$LESSON_DIR" - < prompt.txt`.
+Ask the user only when a required field cannot be inferred safely, or when the inferred stage is `待确认`.
 
-## Quick reference
+### Helper Script
 
-| You want to… | Run |
+Prefer the bundled script; it handles inference and edits both website config files consistently.
+
+Dry-run first:
+
+```bash
+python ~/.agents/skills/makecourse/scripts/publish_course.py --source . --dry-run
+```
+
+Apply after reviewing the dry-run:
+
+```bash
+python ~/.agents/skills/makecourse/scripts/publish_course.py --source . --write-course-yaml
+```
+
+Useful overrides:
+
+| Option | Use |
 |---|---|
-| Fresh course from a topic | Stage 0 → 1 → 2 (loop) → 3 (loop) → 4 |
-| Resume after handout but before slides | Stage 0 → skip 1 (verify outputs) → 2 (loop) → 3 (loop) → 4 |
-| Re-render only lesson 3's video | Stage 0 → skip 1 & 2 → run stage 3 with `<selected lessons>=lesson3` only |
-| Replace the voice across all lessons | Inside each `lesson{i}/`: edit `audio.md`, delete `audio/*.mp3`, rerun stage 3 with the same loop |
-| Add a new lesson to an existing course | Stage 1 in continue mode (let `ai-tutorials` Step 0 detect existing state), then stages 2+3 scoped to the new lesson only |
+| `--course-id ai-concept` | Override inferred website id |
+| `--repo-url https://gitee.com/likefallwind/aistudy-stage2-03-ai-concept` | Use when git origin is missing/private |
+| `--stage 初中` | Override stage inference |
+| `--track "AI 通识"` | Set website track |
+| `--status 待审核` | Set course status |
+| `--theme-line 机器学习` | Add one or more theme lines |
+| `--video-glob 'lesson*/deck/*.mp4'` | Override local video discovery |
+| `--write-course-yaml` | Create source `course.yaml` if it is missing |
+
+The script updates:
+
+- `<website>/course-sources.yaml`
+- `<website>/course-assets.local.yaml`
+- `<course>/course.yaml` only when `--write-course-yaml` is passed and the file does not already exist
+
+### Publish Workflow
+
+1. Locate the course root and website root.
+2. Run the helper script with `--dry-run`.
+3. Check the inferred `course_id`, `repo`, `branch`, `stage`, `hours`, and video globs. If any are wrong, rerun with overrides.
+4. Apply the script.
+5. If `course.yaml` was created or lesson text changed, commit and push the course repo before website sync. Do not auto-push unless the user explicitly asked.
+6. Run website sync:
+
+```bash
+cd /home/likefallwind/code/aistudy101-website
+npm run sync
+```
+
+7. Verify generated data and assets:
+
+```bash
+rg '"courseId": "<course-id>"' src/data/course-content.json
+find static/course-assets/<course-id> -maxdepth 4 -type f | sort
+```
+
+Expected result: each lesson appears in `src/data/course-content.json` with outline/handout/project Markdown when those files exist, and generated videos appear under `static/course-assets/<course-id>/lessonN/video/`.
+
+### Manual Fallback
+
+If the helper script is unavailable:
+
+1. Add or update `course-sources.yaml` with a `gitee` source entry and fallback metadata.
+2. Add or update `course-assets.local.yaml`:
+
+```yaml
+courses:
+  ai-concept:
+    source_dir: /home/likefallwind/code/course-outline/stage2/03-ai-concept
+    video_globs:
+      - "lesson*/deck/*.mp4"
+      - "lesson*/video/*.mp4"
+      - "lesson*/*.mp4"
+    video_publish_name: "{lesson_id}-intro{suffix}"
+```
+
+3. Run `npm run sync` in the website repo.
+4. Verify `src/data/course-content.json` and `static/course-assets/<course-id>/lesson*/video/`.
+
+## Generating Missing Courseware
+
+Use this mode only when the user asks to create or complete course artifacts, not merely publish an existing repo.
+
+### Stage 0: Preflight
+
+- `command -v codex` must succeed.
+- `~/.agents/skills/ai-tutorials/SKILL.md`, `codex2course`, and `pdf2video` should exist.
+- Confirm whether review gates should stop for user approval or proceed automatically.
+
+### Stage 1: Course Text via `ai-tutorials`
+
+```bash
+codex exec --cd "<course-root>" --sandbox workspace-write \
+  "Use the ai-tutorials skill to generate or continue this course. Run the course design, syllabus, lesson handout, outline, project, and tool-requirements steps. Stop at review gates unless auto-approval was explicitly authorized."
+```
+
+Verify `introduction.md`, `syllabus.md`, and `lesson*/handout.md` exist.
+
+### Stage 2: Slides via `codex2course`
+
+For each selected lesson, use a `deck/` subdirectory so generated slide artifacts do not overwrite source lesson files:
+
+```bash
+mkdir -p "lessonN/deck"
+cp -p "lessonN/outline.md" "lessonN/deck/outline.md"
+cp -p "lessonN/handout.md" "lessonN/deck/handout.md"
+codex exec --cd "lessonN/deck" --sandbox workspace-write \
+  "Use the codex2course skill on this directory. The handout.md and outline.md already exist. Run slide marker annotation through PDF assembly."
+```
+
+Verify `lessonN/deck/slides/000-cover.png`, `zzz-ending.png`, and a `.pdf` exist.
+
+### Stage 3: Video via `pdf2video`
+
+```bash
+codex exec --cd "lessonN/deck" --sandbox workspace-write \
+  "Use the pdf2video skill on this directory. TTS provider: <edge|minimax>. Voice id: <voice_id if known>. Run sanity-check through final review. Stop at narration review unless auto-approval was explicitly authorized."
+```
+
+Verify exactly one non-empty `lessonN/deck/*.mp4` per rendered lesson.
+
+### Stage 4: Publish
+
+After generating videos, use the Publishing Existing Courses workflow above. Do not call the older `movecourse`-style video-only copy unless the user explicitly wants only video assets moved.
 
 ## Common Mistakes
 
-- **Reimplementing inner skills.** If you find yourself writing a slide marker or invoking an image-gen API from the orchestrator, stop. Call `codex exec` and let `codex2course` do it.
-- **Running stages in parallel by lesson.** Image generation and TTS are rate-limited and resource-heavy. Serial is the default; parallelize only with explicit user authorization.
-- **Skipping the post-stage file checks.** `codex exec` returning success ≠ the artifacts exist. Always `ls` / `test -f` for the expected outputs before advancing.
-- **Auto-approving the inner skills' human gates silently.** `ai-tutorials` Step 3/5, `codex2course` Step 4, and `pdf2video` Step 4 exist for a reason (cheapest revision points). Bypass them only when the calling user has explicitly authorized unattended mode, and tell the user what was bypassed.
-- **Mixing `--cd` with relative paths in the prompt.** The prompt should reference paths relative to the cwd you set with `--cd`, not absolute paths from the orchestrator. Otherwise the inner skill writes to the wrong place.
-- **Forgetting `--sandbox workspace-write`.** Default sandbox is read-only in some Codex configs; the inner skills will appear to "succeed" while writing nothing.
-- **Treating `ai-tutorials` output as a single course directory.** It is per-lesson. Stages 2 and 3 must loop over `lesson{i}/`, not run once at the workspace root.
-- **Calling stage 3 before stage 2 finished.** `pdf2video` step 1 will hard-stop because `slides/` doesn't have `000-cover.png` and `zzz-ending.png` yet. Always verify the PDF exists before invoking stage 3.
-- **Not surfacing partial failures.** If lesson 4 fails at stage 2, the agent must report it. Don't silently skip and produce a "course complete" summary that's missing a lesson.
-- **Using interactive `codex` from inside another agent.** Always `codex exec`. The interactive form will hang waiting for a TTY.
-- **Burying the inner skill name.** Each prompt must literally say "Use the ai-tutorials skill" / "Use the codex2course skill" / "Use the pdf2video skill" so Codex loads the right one. Do not paraphrase.
+- **Only copying videos.** That leaves lesson text invisible unless `course-sources.yaml` also registers the repo and sync runs.
+- **Pointing video globs at `lesson*/*.mp4` only.** Most generated videos live under `lesson*/deck/*.mp4`.
+- **Expecting local Markdown to sync without a push.** Website sync clones the remote repo for text content.
+- **Using Chinese filenames in the public video path.** Publish as ASCII names like `lesson1-intro.mp4`.
+- **Overwriting lesson source files with slide-render files.** Put slide/video artifacts in `lessonN/deck/`.
+- **Skipping dry-run.** Always inspect the inferred course id and repo URL before writing website config.
