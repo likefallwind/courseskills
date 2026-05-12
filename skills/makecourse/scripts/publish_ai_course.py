@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Prepare an existing course repository for aistudy101 website sync."""
+"""Register an AI-generated course in the aistudy101 website.
+
+This script edits website-side config only:
+- course-sources.yaml
+- course-assets.local.yaml
+
+It never moves or deletes source course videos. Website sync later copies videos
+to static/course-assets using safe public filenames.
+"""
 
 from __future__ import annotations
 
@@ -35,25 +43,27 @@ class CoursePlan:
     branch: str
     fallback: dict[str, Any]
     video_globs: list[str]
-    write_course_yaml: bool
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Wire an existing course repository into the aistudy101 website."
+        description="Publish an AI-generated course directory into aistudy101 website config."
     )
-    parser.add_argument("--source", default=".", help="Course repository root; default: cwd")
+    parser.add_argument("--source", default=".", help="Generated course root; default: cwd")
     parser.add_argument("--website-root", default=str(DEFAULT_WEBSITE_ROOT))
     parser.add_argument("--course-id", help="Website course id, e.g. ai-concept")
-    parser.add_argument("--repo-url", help="Public repository URL; inferred from git origin")
+    parser.add_argument(
+        "--repo-url",
+        help="Source repository URL. Prefer SSH, e.g. git@gitee.com:owner/repo.git",
+    )
     parser.add_argument("--branch", help="Source branch; inferred from git")
-    parser.add_argument("--title", help="Course title; inferred from course files")
-    parser.add_argument("--stage", help="Course stage, e.g. 小学 / 初中 / 高中")
+    parser.add_argument("--title", help="Curriculum course title")
+    parser.add_argument("--stage", help="小学 / 初中 / 高中 / 大学")
     parser.add_argument("--education-phase", default="基础教育")
-    parser.add_argument("--track", default="AI 通识")
-    parser.add_argument("--status", default="待审核")
+    parser.add_argument("--track", help="Course track, e.g. AI 通识")
+    parser.add_argument("--status", default="待审核", help="已发布 / 待审核 / AI初稿")
     parser.add_argument("--version", default="0.1")
-    parser.add_argument("--hours", type=float, help="Course hours / lesson count")
+    parser.add_argument("--hours", type=float, help="Course hours or lesson count")
     parser.add_argument(
         "--theme-line",
         action="append",
@@ -64,12 +74,7 @@ def parse_args() -> argparse.Namespace:
         "--video-glob",
         action="append",
         dest="video_globs",
-        help="Local video glob relative to course root. Can be passed multiple times.",
-    )
-    parser.add_argument(
-        "--write-course-yaml",
-        action="store_true",
-        help="Create course.yaml in the course repo when missing.",
+        help="Local video glob relative to source root. Can be passed multiple times.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes only")
     return parser.parse_args()
@@ -96,11 +101,11 @@ def normalize_repo_url(url: str | None) -> str | None:
     url = url.strip()
     scp = re.fullmatch(r"git@(gitee\.com|github\.com):(.+?)(?:\.git)?", url)
     if scp:
-        return f"https://{scp.group(1)}/{scp.group(2)}"
+        return f"git@{scp.group(1)}:{scp.group(2)}.git"
     https = re.fullmatch(r"(https?://.+?)(?:\.git)?/?", url)
     if https:
         return https.group(1)
-    return url.removesuffix(".git")
+    return url
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
@@ -139,11 +144,25 @@ def infer_title(source_root: Path, explicit: str | None) -> str:
     course_yaml = read_yaml(source_root / "course.yaml")
     if course_yaml.get("title"):
         return str(course_yaml["title"])
+    intro_title = extract_course_info_value(source_root / "introduction.md", "课程名称")
+    if intro_title:
+        return intro_title
     for name in ("README.md", "introduction.md", "syllabus.md"):
         title = first_heading(source_root / name)
         if title:
             return title
     return source_root.name
+
+
+def extract_course_info_value(path: Path, label: str) -> str | None:
+    if not path.exists():
+        return None
+    pattern = re.compile(rf"^\s*-\s*\*\*{re.escape(label)}\*\*[：:]\s*(.+?)\s*$")
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = pattern.match(line)
+        if match:
+            return strip_markdown(match.group(1))
+    return None
 
 
 def infer_course_id(source_root: Path, explicit: str | None) -> str:
@@ -178,6 +197,17 @@ def infer_stage(source_root: Path, explicit: str | None) -> str:
     return "待确认"
 
 
+def infer_track(source_root: Path, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    text = joined_summary_text(source_root)
+    if "通识" in text:
+        return "AI 通识"
+    if re.search(r"拔尖|竞赛|创新", text):
+        return "拔尖创新培养"
+    return "AI 通识"
+
+
 def joined_summary_text(source_root: Path) -> str:
     chunks: list[str] = []
     for name in ("README.md", "introduction.md", "syllabus.md"):
@@ -207,52 +237,22 @@ def infer_theme_lines(source_root: Path, title: str, explicit: list[str] | None)
         themes.append("机器学习")
     if re.search(r"Python|编程|代码", title, flags=re.IGNORECASE):
         themes.append("编程与工程")
-    return themes
+    if re.search(r"大模型|LLM|Agent", text, flags=re.IGNORECASE):
+        themes.append("大模型 / LLM")
+    return dedupe(themes)
 
 
-def infer_goals(source_root: Path, title: str) -> list[str]:
-    bullets = bullets_after_keywords(joined_summary_text(source_root), ["学习目标", "课程目标"])
-    if bullets:
-        return bullets[:5]
-    return [f"掌握 {title} 的核心概念与实践方法"]
-
-
-def infer_outputs(source_root: Path, title: str) -> list[str]:
-    text = joined_summary_text(source_root)
-    outputs: list[str] = []
-    for line in text.splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) < 3 or _is_table_separator(cells):
-            continue
-        project = strip_markdown(cells[-1])
-        if project and project not in {"项目", "项目任务"}:
-            outputs.append(f"完成项目：{project}")
-    return dedupe(outputs)[:5] or [f"完成 {title} 的课程项目"]
-
-
-def bullets_after_keywords(text: str, keywords: list[str]) -> list[str]:
-    results: list[str] = []
-    collecting = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") and any(keyword in stripped for keyword in keywords):
-            collecting = True
-            continue
-        if collecting and stripped.startswith("#") and results:
-            break
-        if collecting and stripped.startswith("- "):
-            results.append(strip_markdown(stripped[2:]))
-    return dedupe(results)
+def lesson_dirs(source_root: Path) -> list[Path]:
+    dirs = [
+        path
+        for path in source_root.iterdir()
+        if path.is_dir() and re.fullmatch(r"lesson0*\d+", path.name, flags=re.IGNORECASE)
+    ]
+    return sorted(dirs, key=lambda path: int(re.search(r"\d+", path.name).group(0)))
 
 
 def strip_markdown(text: str) -> str:
     return re.sub(r"[*_`]+", "", text).strip()
-
-
-def _is_table_separator(cells: list[str]) -> bool:
-    return all(re.fullmatch(r":?-+:?", cell) is not None for cell in cells)
 
 
 def dedupe(items: list[str]) -> list[str]:
@@ -263,15 +263,6 @@ def dedupe(items: list[str]) -> list[str]:
             result.append(item)
             seen.add(item)
     return result
-
-
-def lesson_dirs(source_root: Path) -> list[Path]:
-    dirs = [
-        path
-        for path in source_root.iterdir()
-        if path.is_dir() and re.fullmatch(r"lesson0*\d+", path.name, flags=re.IGNORECASE)
-    ]
-    return sorted(dirs, key=lambda path: int(re.search(r"\d+", path.name).group(0)))
 
 
 def existing_course_entry(sources: list[dict[str, Any]], course_id: str) -> dict[str, Any] | None:
@@ -297,15 +288,14 @@ def build_plan(args: argparse.Namespace) -> CoursePlan:
     if not repo_url:
         raise ValueError("Unable to infer repo URL; pass --repo-url")
     branch = args.branch or run_git(source_root, "branch", "--show-current") or "master"
-    hours = infer_hours(source_root, args.hours)
     fallback = {
         "title": title,
         "stage": infer_stage(source_root, args.stage),
         "education_phase": args.education_phase,
-        "track": args.track,
+        "track": infer_track(source_root, args.track),
         "status": args.status,
         "version": str(args.version),
-        "hours": hours,
+        "hours": infer_hours(source_root, args.hours),
         "theme_lines": infer_theme_lines(source_root, title, args.theme_lines),
     }
     return CoursePlan(
@@ -317,7 +307,6 @@ def build_plan(args: argparse.Namespace) -> CoursePlan:
         branch=branch,
         fallback=fallback,
         video_globs=args.video_globs or DEFAULT_VIDEO_GLOBS,
-        write_course_yaml=args.write_course_yaml,
     )
 
 
@@ -331,44 +320,9 @@ def planned_source_entry(plan: CoursePlan) -> dict[str, Any]:
     }
 
 
-def planned_course_yaml(plan: CoursePlan) -> dict[str, Any]:
-    fallback = plan.fallback
-    return {
-        "id": plan.course_id,
-        "title": plan.title,
-        "stage": fallback["stage"],
-        "education_phase": fallback["education_phase"],
-        "track": fallback["track"],
-        "status": fallback["status"],
-        "version": fallback["version"],
-        "hours": fallback["hours"],
-        "target_learners": [fallback["stage"]],
-        "prerequisites": {
-            "coding": "按课程说明准备",
-            "math": "按对应学段要求准备",
-            "ai": "按课程说明准备",
-        },
-        "goals": infer_goals(plan.source_root, plan.title),
-        "outputs": infer_outputs(plan.source_root, plan.title),
-        "links": {"repo": plan.repo_url, "website": f"/courses/{plan.course_id}"},
-        "review": {
-            "pedagogy": "pending",
-            "technical": "pending",
-            "ethics": "pending",
-            "runnable": "pending",
-            "piloted": False,
-        },
-        "maintainers": ["AI Study 101"],
-        "contributors": [],
-        "license": {"content": "CC BY-SA 4.0", "code": "MIT"},
-        "theme_lines": fallback["theme_lines"],
-    }
-
-
 def apply_plan(plan: CoursePlan, dry_run: bool) -> None:
     sources_path = plan.website_root / "course-sources.yaml"
     local_assets_path = plan.website_root / "course-assets.local.yaml"
-    course_yaml_path = plan.source_root / "course.yaml"
 
     sources_data = read_yaml(sources_path) or {"sources": []}
     sources = list(sources_data.get("sources") or [])
@@ -390,39 +344,41 @@ def apply_plan(plan: CoursePlan, dry_run: bool) -> None:
         "video_publish_name": "{lesson_id}-intro{suffix}",
     }
 
-    should_write_course_yaml = plan.write_course_yaml and not course_yaml_path.exists()
+    video_candidates = video_files(plan.source_root, plan.video_globs)
+    lesson_names = [path.name for path in lesson_dirs(plan.source_root)]
 
     print(f"Course root: {plan.source_root}")
     print(f"Website root: {plan.website_root}")
     print(f"Course id: {plan.course_id}")
     print(f"Title: {plan.title}")
     print(f"Repo: {plan.repo_url} ({plan.branch})")
-    print(f"Lessons: {', '.join(path.name for path in lesson_dirs(plan.source_root))}")
+    print(f"Lessons: {', '.join(lesson_names)}")
+    print(f"Local videos: {len(video_candidates)}")
     print(f"Fallback: {plan.fallback}")
     print(f"course-sources.yaml: {source_action} {plan.course_id}")
-    print("course-assets.local.yaml: set local video source and globs")
-    if should_write_course_yaml:
-        print("course.yaml: create")
-    elif plan.write_course_yaml and course_yaml_path.exists():
-        print("course.yaml: exists, leave unchanged")
+    print("course-assets.local.yaml: set local video source and copy globs")
+    print("Source course repo: leave unchanged")
 
     dirty = run_git(plan.source_root, "status", "--porcelain")
     if dirty:
-        print("Warning: source repo has uncommitted changes; website sync reads the remote repo.")
-
-    ahead = run_git(plan.source_root, "rev-list", "--count", "@{u}..HEAD")
-    if ahead and ahead != "0":
-        print(f"Warning: source branch is {ahead} commit(s) ahead of upstream; push before syncing.")
+        print("Warning: source repo has uncommitted changes; website sync reads committed remote text.")
 
     if dry_run:
-        print("\nDry run only. Re-run without --dry-run to write these changes.")
+        print("\nDry run only. Re-run without --dry-run to write website config.")
         return
 
     write_yaml(sources_path, sources_data)
     write_yaml(local_assets_path, local_assets_data)
-    if should_write_course_yaml:
-        write_yaml(course_yaml_path, planned_course_yaml(plan))
     print("\nWrote website course configuration.")
+
+
+def video_files(source_root: Path, patterns: list[str]) -> list[Path]:
+    result: dict[Path, None] = {}
+    for pattern in patterns:
+        for path in source_root.glob(pattern):
+            if path.is_file() and path.suffix.lower() in {".mp4", ".webm", ".ogg"}:
+                result[path.resolve()] = None
+    return sorted(result)
 
 
 def main() -> int:
@@ -432,7 +388,7 @@ def main() -> int:
         apply_plan(plan, dry_run=args.dry_run)
         return 0
     except Exception as exc:
-        print(f"publish_course: {exc}", file=sys.stderr)
+        print(f"publish_ai_course: {exc}", file=sys.stderr)
         return 1
 
 

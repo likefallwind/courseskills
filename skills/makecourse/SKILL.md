@@ -1,112 +1,182 @@
 ---
 name: makecourse
-description: Use when publishing an existing AI course repository into the aistudy101 website, wiring course registry/local asset config, syncing lesson text and generated videos, or orchestrating full course generation from topic to handout/slides/video.
+description: Use when publishing an AI-generated course directory into the aistudy101 website. The user provides the generated course path and says which curriculum course it corresponds to; Codex must register the course, keep the source repo link, copy generated lesson videos into website assets through sync, update data, run build verification, and leave source videos untouched.
 ---
 
 # Makecourse
 
-## Overview
+## Scope
 
-`makecourse` has two modes:
+Use this skill when a user says an AI-generated course should go online on the aistudy101 website, especially when they provide a path such as `/home/likefallwind/code/course-outline/stage2/03-ai-concept` and a curriculum placement such as `初中 机器学习概念入门（通识）`.
 
-1. **Publish an existing course repo to aistudy101**: run from a repo like `.../course-outline/stage2/03-ai-concept`; register it in the website, wire local generated videos, run sync, and verify the learning page has lesson text plus video entries.
-2. **Generate missing courseware**: when starting from a topic or rough outline, call `ai-tutorials`, `codex2course`, and `pdf2video` through `codex exec` to create handouts, slide decks, and narrated videos.
+This skill is for **publishing an already generated course**, not for creating handouts, slides, or narration. If the user asks to generate course content first, use the relevant course-generation skills before returning here.
 
-Default to publishing mode when the current directory already contains `lessonN/` folders. Do not treat publishing as "copy videos only": the website needs both `course-sources.yaml` for lesson text and `course-assets.local.yaml` for generated media that lives outside the remote repo layout.
+## Website Contract
 
-## Publishing Existing Courses
+The website root is normally:
 
-### What the Website Reads
+```text
+/home/likefallwind/code/aistudy101-website
+```
 
-The aistudy101 website builds a course from two places:
+Publishing requires both:
 
-- `course-sources.yaml`: remote repo metadata. Sync clones the repo and reads `README.md`, `introduction.md`, `syllabus.md`, `lesson*/outline.md`, `lesson*/handout.md`, and `lesson*/project.md`.
-- `course-assets.local.yaml`: local generated media. Use this when videos are in `lesson*/deck/*.mp4` or another local-only render directory. Sync copies them to `static/course-assets/<course-id>/<lesson-id>/video/<lesson-id>-intro.mp4`.
+- `course-sources.yaml`: course registry and source repo metadata. The sync step clones the repo and reads `README.md`, `introduction.md`, `syllabus.md`, `lesson*/outline.md`, `lesson*/handout.md`, and `lesson*/project.md`.
+- `course-assets.local.yaml`: local media source config. The sync step copies local videos into `static/course-assets/<course-id>/<lesson-id>/video/<lesson-id>-intro.mp4`.
 
-If lesson text is local but not pushed to the remote repo, website sync will not see it. Commit and push source-repo content before expecting new text to appear on the site. Local video files do not need to be pushed if `course-assets.local.yaml` points to them.
+Generated videos must be **copied**, never moved or deleted. Source course files and source videos should remain in place.
 
-### Inputs to Infer
+## Inputs To Infer
 
-Infer these before asking the user:
+Infer these before asking questions:
 
 | Field | Source |
 |---|---|
-| Course root | Current directory or nearest parent containing `lessonN/` |
+| Course root | User path, current directory, or nearest parent with `lessonN/` folders |
 | Website root | `/home/likefallwind/code/aistudy101-website` unless user says otherwise |
-| Course id | `course.yaml:id`, else folder name with leading `NN-` removed, e.g. `03-ai-concept` -> `ai-concept` |
-| Repo URL | `git remote get-url origin`, converted from `git@gitee.com:owner/repo.git` to HTTPS |
+| Course id | `course.yaml:id`, else folder name without leading `NN-`, e.g. `03-ai-concept` -> `ai-concept` |
+| Repo URL | `git remote get-url origin`; keep SSH form such as `git@gitee.com:owner/repo.git` when available |
 | Branch | `git branch --show-current`, default `master` |
-| Title | `course.yaml:title`, first H1 in `README.md`, `introduction.md`, or `syllabus.md` |
-| Stage | path segment (`stage1` -> 小学, `stage2` -> 初中, `stage3` -> 高中), else course text |
-| Hours | `总课时：N 节` from course text, else number of `lessonN/` folders |
+| Title | User wording first, else `course.yaml:title`, else course info in `introduction.md`, else first H1 |
+| Stage | User wording first, else path segment: `stage1` 小学, `stage2` 初中, `stage3` 高中 |
+| Track | User wording: `通识` -> `AI 通识`; otherwise infer conservatively |
+| Status | User wording first; if they say uploaded/ready/上线, usually `已发布`; otherwise `待审核` |
+| Hours | `总课时：N 节` from course text, else count `lessonN/` directories |
 | Video globs | `lesson*/deck/*.mp4`, `lesson*/video/*.mp4`, `lesson*/*.mp4` |
 
-Ask the user only when a required field cannot be inferred safely, or when the inferred stage is `待确认`.
+Ask only when a required field cannot be inferred safely, or when the course id/title would be ambiguous.
 
-### Helper Script
+## Preferred Helper
 
-Prefer the bundled script; it handles inference and edits both website config files consistently.
-
-Dry-run first:
+Use the bundled helper so config edits are consistent:
 
 ```bash
-python ~/.agents/skills/makecourse/scripts/publish_course.py --source . --dry-run
+python /home/likefallwind/code/courseskills/skills/makecourse/scripts/publish_ai_course.py \
+  --source /path/to/generated-course \
+  --dry-run
 ```
 
 Apply after reviewing the dry-run:
 
 ```bash
-python ~/.agents/skills/makecourse/scripts/publish_course.py --source . --write-course-yaml
+python /home/likefallwind/code/courseskills/skills/makecourse/scripts/publish_ai_course.py \
+  --source /path/to/generated-course \
+  --title "机器学习概念入门" \
+  --stage 初中 \
+  --track "AI 通识" \
+  --status 已发布
 ```
 
 Useful overrides:
 
 | Option | Use |
 |---|---|
-| `--course-id ai-concept` | Override inferred website id |
-| `--repo-url https://gitee.com/likefallwind/aistudy-stage2-03-ai-concept` | Use when git origin is missing/private |
-| `--stage 初中` | Override stage inference |
-| `--track "AI 通识"` | Set website track |
-| `--status 待审核` | Set course status |
+| `--course-id ai-concept` | Set website course id |
+| `--repo-url git@gitee.com:likefallwind/aistudy-stage2-03-ai-concept.git` | Prefer SSH repo URL to avoid HTTPS username prompts |
+| `--branch master` | Set source branch |
+| `--title "机器学习概念入门"` | Match curriculum course title |
+| `--stage 初中` | Match curriculum stage |
+| `--track "AI 通识"` | Match curriculum track |
+| `--status 已发布` | Publish immediately |
 | `--theme-line 机器学习` | Add one or more theme lines |
-| `--video-glob 'lesson*/deck/*.mp4'` | Override local video discovery |
-| `--write-course-yaml` | Create source `course.yaml` if it is missing |
+| `--video-glob "lesson*/deck/*.mp4"` | Override video discovery |
 
-The script updates:
+The helper updates only website-side files:
 
 - `<website>/course-sources.yaml`
 - `<website>/course-assets.local.yaml`
-- `<course>/course.yaml` only when `--write-course-yaml` is passed and the file does not already exist
 
-### Publish Workflow
+It does **not** edit, move, delete, commit, or push the generated course repo.
 
-1. Locate the course root and website root.
-2. Run the helper script with `--dry-run`.
-3. Check the inferred `course_id`, `repo`, `branch`, `stage`, `hours`, and video globs. If any are wrong, rerun with overrides.
-4. Apply the script.
-5. If `course.yaml` was created or lesson text changed, commit and push the course repo before website sync. Do not auto-push unless the user explicitly asked.
-6. Run website sync:
+## Workflow
+
+1. Inspect the course root:
+
+```bash
+find <course-root> -maxdepth 3 -type f | sort | sed -n '1,160p'
+git -C <course-root> remote -v
+git -C <course-root> branch --show-current
+```
+
+2. Confirm lesson count and videos. There should usually be one mp4 per lesson. Video files often have Chinese names under `lessonN/deck/`; that is fine because sync publishes them as ASCII names.
+
+3. Run the helper dry-run. Check:
+
+- course id
+- title
+- stage / track / status
+- repo URL, preferably SSH
+- branch
+- hours
+- video globs
+
+4. Apply the helper with overrides from the user’s curriculum mapping.
+
+5. Run website sync:
 
 ```bash
 cd /home/likefallwind/code/aistudy101-website
 npm run sync
 ```
 
-7. Verify generated data and assets:
+Expected effect:
+
+- source Markdown appears in `src/data/course-content.json`
+- local videos are copied to `static/course-assets/<course-id>/lessonN/video/<lessonN>-intro.mp4`
+- source mp4 files remain untouched
+
+6. Verify data and assets:
 
 ```bash
-rg '"courseId": "<course-id>"' src/data/course-content.json
-find static/course-assets/<course-id> -maxdepth 4 -type f | sort
+node -e 'const fs=require("fs"); const id="<course-id>"; const c=JSON.parse(fs.readFileSync("src/data/courses.json","utf8")).find(x=>x.id===id); const cc=JSON.parse(fs.readFileSync("src/data/course-content.json","utf8")).courses.find(x=>x.courseId===id); console.log({title:c?.title,status:c?.status,repo:c?.links?.repo,lessons:cc?.lessons?.length,videos:cc?.lessons?.reduce((n,l)=>n+l.videos.length,0)});'
+find static/course-assets/<course-id> -path '*/video/*.mp4' -type f | sort
 ```
 
-Expected result: each lesson appears in `src/data/course-content.json` with outline/handout/project Markdown when those files exist, and generated videos appear under `static/course-assets/<course-id>/lessonN/video/`.
+7. Build verification:
 
-### Manual Fallback
+```bash
+npm run typecheck
+npm run build
+rg "开始学习|/courses/<course-id>/learn|statusBadge--已发布" build/courses/<course-id>/index.html
+```
 
-If the helper script is unavailable:
+If `开始学习` is missing but `src/data/courses.json` says `已发布`, rerun `npm run build`; Docusaurus static pages may still contain stale data from a previous build.
 
-1. Add or update `course-sources.yaml` with a `gitee` source entry and fallback metadata.
-2. Add or update `course-assets.local.yaml`:
+## SSH Repo Rule
+
+Prefer SSH repo URLs in `course-sources.yaml` when the source repo is on Gitee and SSH works:
+
+```yaml
+repo: git@gitee.com:likefallwind/aistudy-stage2-03-ai-concept.git
+```
+
+Do not normalize SSH to HTTPS for sync. The frontend can display the SSH string while linking to the HTTPS web page; the learning page can convert SSH to HTTPS raw URLs for image fallback.
+
+If sync fails with an HTTPS username prompt, switch the course source to SSH and rerun `npm run sync`.
+
+## Manual Fallback
+
+If the helper is unavailable, edit website config directly.
+
+`course-sources.yaml`:
+
+```yaml
+  - id: ai-concept
+    type: gitee
+    repo: git@gitee.com:likefallwind/aistudy-stage2-03-ai-concept.git
+    branch: master
+    fallback:
+      title: 机器学习概念入门
+      stage: 初中
+      education_phase: 基础教育
+      track: AI 通识
+      status: 已发布
+      version: "0.1"
+      hours: 10
+      theme_lines: [AI 素养, 机器学习]
+```
+
+`course-assets.local.yaml`:
 
 ```yaml
 courses:
@@ -119,60 +189,14 @@ courses:
     video_publish_name: "{lesson_id}-intro{suffix}"
 ```
 
-3. Run `npm run sync` in the website repo.
-4. Verify `src/data/course-content.json` and `static/course-assets/<course-id>/lesson*/video/`.
-
-## Generating Missing Courseware
-
-Use this mode only when the user asks to create or complete course artifacts, not merely publish an existing repo.
-
-### Stage 0: Preflight
-
-- `command -v codex` must succeed.
-- `~/.agents/skills/ai-tutorials/SKILL.md`, `codex2course`, and `pdf2video` should exist.
-- Confirm whether review gates should stop for user approval or proceed automatically.
-
-### Stage 1: Course Text via `ai-tutorials`
-
-```bash
-codex exec --cd "<course-root>" --sandbox workspace-write \
-  "Use the ai-tutorials skill to generate or continue this course. Run the course design, syllabus, lesson handout, outline, project, and tool-requirements steps. Stop at review gates unless auto-approval was explicitly authorized."
-```
-
-Verify `introduction.md`, `syllabus.md`, and `lesson*/handout.md` exist.
-
-### Stage 2: Slides via `codex2course`
-
-For each selected lesson, use a `deck/` subdirectory so generated slide artifacts do not overwrite source lesson files:
-
-```bash
-mkdir -p "lessonN/deck"
-cp -p "lessonN/outline.md" "lessonN/deck/outline.md"
-cp -p "lessonN/handout.md" "lessonN/deck/handout.md"
-codex exec --cd "lessonN/deck" --sandbox workspace-write \
-  "Use the codex2course skill on this directory. The handout.md and outline.md already exist. Run slide marker annotation through PDF assembly."
-```
-
-Verify `lessonN/deck/slides/000-cover.png`, `zzz-ending.png`, and a `.pdf` exist.
-
-### Stage 3: Video via `pdf2video`
-
-```bash
-codex exec --cd "lessonN/deck" --sandbox workspace-write \
-  "Use the pdf2video skill on this directory. TTS provider: <edge|minimax>. Voice id: <voice_id if known>. Run sanity-check through final review. Stop at narration review unless auto-approval was explicitly authorized."
-```
-
-Verify exactly one non-empty `lessonN/deck/*.mp4` per rendered lesson.
-
-### Stage 4: Publish
-
-After generating videos, use the Publishing Existing Courses workflow above. Do not call the older `movecourse`-style video-only copy unless the user explicitly wants only video assets moved.
+Then run `npm run sync`, `npm run typecheck`, and `npm run build`.
 
 ## Common Mistakes
 
-- **Only copying videos.** That leaves lesson text invisible unless `course-sources.yaml` also registers the repo and sync runs.
-- **Pointing video globs at `lesson*/*.mp4` only.** Most generated videos live under `lesson*/deck/*.mp4`.
-- **Expecting local Markdown to sync without a push.** Website sync clones the remote repo for text content.
-- **Using Chinese filenames in the public video path.** Publish as ASCII names like `lesson1-intro.mp4`.
-- **Overwriting lesson source files with slide-render files.** Put slide/video artifacts in `lessonN/deck/`.
-- **Skipping dry-run.** Always inspect the inferred course id and repo URL before writing website config.
+- Only copying videos without registering `course-sources.yaml`; the course page will lack lesson text.
+- Moving source mp4 files; always copy through sync.
+- Keeping Gitee HTTPS when the repo requires credentials; prefer SSH.
+- Forgetting `course-assets.local.yaml`; generated mp4 files outside the repo layout will not publish.
+- Assuming `已发布` immediately changes `build/`; Docusaurus needs rebuild.
+- Letting `deck/slides` images with Chinese filenames enter public assets; sync should ignore deck internals and publish only needed lesson assets and videos.
+- Overwriting unrelated registry formatting or user changes; keep diffs focused.
