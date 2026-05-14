@@ -11,6 +11,8 @@ Move or publish generated lesson videos from a course-generation workspace into 
 
 Default behavior is a safe publish copy. Delete the generated originals only when the user explicitly asks for a true move.
 
+When this workflow adjusts or registers course metadata, default the course status to `已发布` after the course is ready, unless the user gives a different status or special instruction.
+
 ## When to Use
 
 Use this skill when:
@@ -48,7 +50,8 @@ If the course id is not listed in `course-sources.yaml`, distinguish these cases
 6. Dry-run first, then execute the copy or true move.
 7. Verify every destination file exists and has a non-zero size. Print a source-to-destination manifest.
 8. From the website repo, run `npm run sync` so `src/data/course-content.json`, `src/data/courses.json`, and `src/data/curriculum-map.json` reference the published videos.
-9. Run `npm run build` when the change should be ready for review or deployment.
+9. If course metadata was changed, set the course status to `已发布` by default. Follow the user's explicit status instead if they provide one, such as `待审核` or `AI初稿`.
+10. Run `npm run build` when the change should be ready for review or deployment.
 
 ## New Course Registration
 
@@ -59,7 +62,7 @@ When the user says a source course "corresponds to" a curriculum item, treat the
    - `id`: stable lowercase ASCII slug, usually derived from the source folder or repo name.
    - `type: gitee`
    - `repo`: the source repo URL from `git -C <source> remote -v` when present.
-   - `fallback`: title, stage, education phase, track, status, hours, and theme lines.
+   - `fallback`: title, stage, education phase, track, status, hours, and theme lines. Use `status: 已发布` by default after the course has been adjusted, unless the user explicitly specifies another status.
 3. If the source repo cannot be cloned due to Gitee credentials, keep the registry entry and rely on `course-assets.local.yaml` for the local source fallback.
 4. After `npm run sync`, confirm the course appears in:
    - `src/data/courses.json`

@@ -6,6 +6,7 @@
 |---|---|
 | **ai-tutorials** | Design AI course syllabus, lectures, and hands-on projects |
 | **codex2course** | Topic / outline → handout → slide images → PDF |
+| **api2course** | Topic / outline → handout → OpenAI API slide images → PDF |
 | **pdf2video** | Slide deck → per-slide narration → TTS audio → mp4 |
 | **makecourse** | Publish existing course repos to aistudy101 and orchestrate the full generation pipeline when artifacts are missing |
 | **movecourse** | Low-level video-only helper for copying generated lesson mp4 files into the website `course-assets` tree |
@@ -23,6 +24,7 @@ Requires [Node.js](https://nodejs.org/). Skills are installed to `~/.claude/skil
 ```bash
 npx skills add likefallwind/courseskills --skill ai-tutorials
 npx skills add likefallwind/courseskills --skill codex2course
+npx skills add likefallwind/courseskills --skill api2course
 npx skills add likefallwind/courseskills --skill pdf2video
 npx skills add likefallwind/courseskills --skill makecourse
 npx skills add likefallwind/courseskills --skill movecourse
@@ -45,6 +47,10 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
 # codex2course
 curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/codex2course/SKILL.md \
   -o ~/.claude/skills/codex2course.md
+
+# api2course
+curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/api2course/SKILL.md \
+  -o ~/.claude/skills/api2course.md
 
 # pdf2video
 curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skills/pdf2video/SKILL.md \
@@ -73,9 +79,19 @@ curl -fsSL https://raw.githubusercontent.com/likefallwind/courseskills/main/skil
   pip install Pillow
   ```
 
+### api2course
+
+- `OPENAI_API_KEY` set in the environment (used by `gpt-image-2`)
+- Python 3; the OpenAI image script uses only the standard library
+- Python 3 + [Pillow](https://pillow.readthedocs.io/) for PDF assembly:
+  ```bash
+  export OPENAI_API_KEY=your_key_here
+  pip install Pillow
+  ```
+
 ### pdf2video
 
-- Everything above, plus:
+- A completed slide deck from `codex2course` or `api2course`, plus:
 - [ffmpeg](https://ffmpeg.org/) on `PATH` (video assembly)
 - [MINIMAX](https://www.minimaxi.com/) account + API key (TTS)
 - Python 3 + `requests`:
@@ -109,6 +125,9 @@ Design a 10-lesson LLM application development course for CS undergrads.
 
 # codex2course
 Create a 6-hour Python async course for backend engineers.
+
+# api2course
+Use api2course to create a 6-hour Python async course with OpenAI API generated slides.
 
 # pdf2video  
 Turn the course in ./course/ into a narrated lecture video, voice: male-qn-qingse.
@@ -176,6 +195,9 @@ Several skills ship helper scripts used internally — you can also run them dir
 |---|---|
 | `skills/codex2course/scripts/split_handout.py` | Slice `handout.md` into `slide-units/` |
 | `skills/codex2course/scripts/images2pdf.py` | Combine `slides/*.png` into a PDF |
+| `skills/api2course/scripts/generate_openai_image.py` | Generate one slide image with the OpenAI Image API |
+| `skills/api2course/scripts/split_handout.py` | Slice `handout.md` into `slide-units/` |
+| `skills/api2course/scripts/images2pdf.py` | Combine `slides/*.png` into a PDF |
 | `skills/pdf2video/scripts/synth_audio.py` | Call MINIMAX TTS for each narration file |
 | `skills/pdf2video/scripts/assemble_video.py` | Pair slides + audio into `course-video.mp4` |
 | `skills/movecourse/scripts/movecourse.py` | Copy or move `lessonN/*.mp4` into website course-assets |
@@ -183,6 +205,7 @@ Several skills ship helper scripts used internally — you can also run them dir
 ```bash
 python skills/codex2course/scripts/split_handout.py course/handout.md
 python skills/codex2course/scripts/images2pdf.py course/slides course/course-deck.pdf
+python skills/api2course/scripts/generate_openai_image.py --prompt-file course/prompt.txt --out course/slides/001.png
 python skills/pdf2video/scripts/synth_audio.py course/
 python skills/pdf2video/scripts/assemble_video.py course/
 python skills/movecourse/scripts/movecourse.py --course ai-enlightenment --source course/ --dry-run
