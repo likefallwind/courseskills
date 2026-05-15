@@ -13,6 +13,11 @@ from pathlib import Path
 
 DEFAULT_DEST_ROOT = Path("/home/likefallwind/code/aistudy101-website/static/course-assets")
 DEFAULT_SOURCES_YAML = Path("/home/likefallwind/code/aistudy101-website/course-sources.yaml")
+DEFAULT_COURSE_ID_REGISTRY = Path(
+    "/home/likefallwind/code/aistudy101-website/docs/course-id-registry.md"
+)
+
+COURSE_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,14 @@ class Operation:
     lesson: str
     source: Path
     destination: Path
+
+
+@dataclass(frozen=True)
+class CourseIdEntry:
+    title: str
+    standard_title: str
+    course_id: str
+    status: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,6 +46,15 @@ def parse_args() -> argparse.Namespace:
         "--sources-yaml",
         default=str(DEFAULT_SOURCES_YAML),
         help="course-sources.yaml used to validate course ids",
+    )
+    parser.add_argument(
+        "--course-id-registry",
+        default=str(DEFAULT_COURSE_ID_REGISTRY),
+        help="Markdown course ID registry used to resolve planned curriculum course ids",
+    )
+    parser.add_argument(
+        "--course-title",
+        help="Curriculum or standard Chinese course title; resolves to --course via the ID registry",
     )
     parser.add_argument(
         "--filename-template",
@@ -66,6 +88,74 @@ def load_course_ids(path: Path) -> list[str]:
         if match:
             ids.append(match.group(1))
     return ids
+
+
+def validate_course_id(course_id: str) -> str:
+    if not COURSE_ID_RE.fullmatch(course_id):
+        raise ValueError(
+            f"Invalid course id {course_id!r}; use lowercase kebab-case letters, "
+            "digits, and single hyphens only"
+        )
+    if len(course_id) > 64:
+        raise ValueError(f"Invalid course id {course_id!r}; maximum length is 64")
+    return course_id
+
+
+def load_course_id_registry(path: Path) -> list[CourseIdEntry]:
+    if not path.exists():
+        return []
+
+    entries: list[CourseIdEntry] = []
+    row_re = re.compile(
+        r"^\|\s*(?P<columns>.+?)\s*\|\s*$",
+    )
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = row_re.match(line)
+        if not match:
+            continue
+        cells = [cell.strip() for cell in match.group("columns").split("|")]
+        if len(cells) == 6:
+            title, standard_title, course_id, status = cells[2], cells[3], cells[4], cells[5]
+        elif len(cells) == 5:
+            title, standard_title, course_id, status = cells[1], cells[2], cells[3], cells[4]
+        else:
+            continue
+        if title in {"全景图名称", "---"} or "`" not in course_id:
+            continue
+        id_match = re.fullmatch(r"`([^`]+)`", course_id)
+        if id_match is None:
+            continue
+        entries.append(
+            CourseIdEntry(
+                title=title,
+                standard_title=standard_title,
+                course_id=validate_course_id(id_match.group(1)),
+                status=status,
+            )
+        )
+    return entries
+
+
+def normalize_title(title: str) -> str:
+    return re.sub(r"\s+", "", title).lower()
+
+
+def resolve_course_id_from_title(
+    title: str, registry_entries: list[CourseIdEntry]
+) -> CourseIdEntry | None:
+    normalized = normalize_title(title)
+    matches = [
+        entry
+        for entry in registry_entries
+        if normalize_title(entry.title) == normalized
+        or normalize_title(entry.standard_title) == normalized
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        ids = ", ".join(entry.course_id for entry in matches)
+        raise ValueError(f"Course title {title!r} matches multiple course ids: {ids}")
+    return matches[0]
 
 
 def lesson_sort_key(path: Path) -> tuple[int, str]:
@@ -159,29 +249,70 @@ def main() -> int:
 
     try:
         course_ids = load_course_ids(sources_yaml)
+        registry_entries = load_course_id_registry(Path(args.course_id_registry).expanduser().resolve())
+        registry_ids = [entry.course_id for entry in registry_entries]
         if args.list_courses:
-            print("\n".join(course_ids))
+            known = set(course_ids)
+            for course_id in course_ids:
+                print(course_id)
+            for entry in registry_entries:
+                if entry.course_id not in known:
+                    print(f"{entry.course_id}\t{entry.status}\t{entry.standard_title}")
             return 0
 
-        if not args.course:
-            print("movecourse: --course is required unless --list-courses is used", file=sys.stderr)
-            return 2
-
-        if args.course not in course_ids and not args.allow_unknown_course:
+        course = args.course
+        if args.course_title:
+            entry = resolve_course_id_from_title(args.course_title, registry_entries)
+            if entry is None:
+                print(
+                    f"movecourse: course title {args.course_title!r} is not listed in "
+                    f"{Path(args.course_id_registry).expanduser().resolve()}",
+                    file=sys.stderr,
+                )
+                return 2
+            if course and course != entry.course_id:
+                print(
+                    f"movecourse: --course {course!r} conflicts with --course-title "
+                    f"{args.course_title!r}, which maps to {entry.course_id!r}",
+                    file=sys.stderr,
+                )
+                return 2
+            course = entry.course_id
             print(
-                f"Course id {args.course!r} is not listed in {sources_yaml}. "
-                "Check whether the course name was typed incorrectly. "
+                f"Resolved course title {args.course_title!r} to {course!r} "
+                f"({entry.status})."
+            )
+
+        if not course:
+            print(
+                "movecourse: --course or --course-title is required unless --list-courses is used",
+                file=sys.stderr,
+            )
+            return 2
+        course = validate_course_id(course)
+
+        if course not in course_ids and course not in registry_ids and not args.allow_unknown_course:
+            print(
+                f"Course id {course!r} is not listed in {sources_yaml} or "
+                f"{Path(args.course_id_registry).expanduser().resolve()}. "
+                "Check the course ID registry before inventing a new id. "
                 "Pass --allow-unknown-course only after confirmation.",
                 file=sys.stderr,
             )
             if course_ids:
                 print("Known course ids: " + ", ".join(course_ids), file=sys.stderr)
             return 2
+        if course not in course_ids and course in registry_ids:
+            print(
+                f"Course id {course!r} is reserved in the ID registry but not yet "
+                f"registered in {sources_yaml}. Static assets can be copied now, "
+                "but the website course will not become clickable until course-sources.yaml is updated."
+            )
 
         operations = collect_operations(
             source_root=source_root,
             dest_root=dest_root,
-            course=args.course,
+            course=course,
             filename_template=args.filename_template,
             overwrite=args.overwrite,
         )

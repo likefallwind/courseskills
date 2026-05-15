@@ -7,7 +7,7 @@ description: Use when publishing AI-generated course lesson mp4 files into the a
 
 ## Overview
 
-Move or publish generated lesson videos from a course-generation workspace into the aistudy101 website assets tree. Validate the requested course id against `course-sources.yaml`, map `lessonN/*.mp4` to the matching website lesson folder, and use English filenames.
+Move or publish generated lesson videos from a course-generation workspace into the aistudy101 website assets tree. Resolve and validate the requested course id against the website course ID registry first, then `course-sources.yaml`, map `lessonN/*.mp4` to the matching website lesson folder, and use English filenames.
 
 Default behavior is a safe publish copy. Delete the generated originals only when the user explicitly asks for a true move.
 
@@ -30,12 +30,14 @@ Do not use this skill for slide rendering, narration generation, or video assemb
 | Course id | Ask the user if not provided; examples: `ai-enlightenment`, `python-intro` |
 | Destination root | `/home/likefallwind/code/aistudy101-website/static/course-assets` |
 | Course registry | `/home/likefallwind/code/aistudy101-website/course-sources.yaml` |
+| Course ID registry | `/home/likefallwind/code/aistudy101-website/docs/course-id-registry.md` |
 | Website repo root | `/home/likefallwind/code/aistudy101-website` |
 | Optional local asset config | `/home/likefallwind/code/aistudy101-website/course-assets.local.yaml` |
 
 If the course id is not listed in `course-sources.yaml`, distinguish these cases:
 
-- If the user only gave a Chinese title or curriculum placement, inspect the source directory name, `README.md`, git remote, and `ai-study-101-curriculum-system-v0.3.md`. Choose a conservative ASCII id only when it is obvious, such as `python-advanced` for `01-python-advanced`; otherwise ask.
+- If the user only gave a Chinese title or curriculum placement, first look it up in `docs/course-id-registry.md`. Reuse that ID when present, even if the course is still marked `预留`.
+- If the title is absent from the ID registry, inspect the source directory name, `README.md`, git remote, and `ai-study-101-curriculum-system-v0.3.md`. Choose a conservative lowercase kebab-case id only when it is obvious, then update `docs/course-id-registry.md`; otherwise ask.
 - If the user expects this to become a real website course, register it in `course-sources.yaml` before copying videos. Prefer the source repo remote URL when available, and include fallback metadata matching the curriculum placement.
 - If the source videos live only on this machine, add or update `course-assets.local.yaml` so `npm run sync` can republish them from the local source directory.
 - Use `--allow-unknown-course` only when the user explicitly wants raw static assets without registering the course.
@@ -44,7 +46,7 @@ If the course id is not listed in `course-sources.yaml`, distinguish these cases
 
 1. Inspect the source directory for direct child folders named `lessonN`.
 2. In each lesson folder, require exactly one direct `.mp4`; report missing or duplicate videos before copying anything.
-3. Validate the course id against `course-sources.yaml`.
+3. Resolve the course id from `docs/course-id-registry.md` when the user gave a Chinese title, then validate it against the ID registry or `course-sources.yaml`.
 4. Create missing destination folders: `<dest-root>/<course-id>/lessonN/video/`.
 5. Write English filenames. Default to the existing website convention: `lessonN-intro.mp4`.
 6. Dry-run first, then execute the copy or true move.
@@ -59,7 +61,7 @@ When the user says a source course "corresponds to" a curriculum item, treat the
 
 1. Check whether the curriculum item already exists as a clickable course in `src/data/curriculum-map.json`.
 2. If it is still a non-clickable placeholder, add a `course-sources.yaml` entry with:
-   - `id`: stable lowercase ASCII slug, usually derived from the source folder or repo name.
+   - `id`: the stable ID from `docs/course-id-registry.md`; add a registry row first if the curriculum item is new.
    - `type: gitee`
    - `repo`: the source repo URL from `git -C <source> remote -v` when present.
    - `fallback`: title, stage, education phase, track, status, hours, and theme lines. Use `status: 已发布` by default after the course has been adjusted, unless the user explicitly specifies another status.
@@ -88,6 +90,7 @@ Prefer the bundled script because it preflights all lessons before writing:
 
 ```bash
 python ~/.agents/skills/movecourse/scripts/movecourse.py --course ai-enlightenment --dry-run
+python ~/.agents/skills/movecourse/scripts/movecourse.py --course-title "Python 编程进阶" --dry-run
 python ~/.agents/skills/movecourse/scripts/movecourse.py --course ai-enlightenment
 ```
 
@@ -97,10 +100,11 @@ Useful options:
 |---|---|
 | `--source PATH` | Source course directory; defaults to `pwd` |
 | `--course ID` | Required course id under `course-assets` |
+| `--course-title TITLE` | Resolve a Chinese curriculum title through `docs/course-id-registry.md` |
 | `--dry-run` | Print planned operations without writing |
 | `--overwrite` | Replace existing destination mp4 files |
 | `--move` | Delete source mp4 after verified copy; use only when user explicitly asked |
-| `--allow-unknown-course` | Continue when course id is absent from `course-sources.yaml` |
+| `--allow-unknown-course` | Continue when course id is absent from both `course-sources.yaml` and the ID registry |
 | `--filename-template '{lesson}-intro.mp4'` | English output pattern |
 
 After copying, verify the website data:
@@ -133,7 +137,7 @@ done
 ## Common Mistakes
 
 - **Using the Chinese source filename in the website tree.** Rename to English; default `lessonN-intro.mp4` is acceptable and matches existing courses.
-- **Skipping course-id validation.** `ai-enlightenment` is a course id; the Chinese title `AI 启蒙体验` is not the destination folder name.
+- **Skipping the course ID registry.** `ai-enlightenment` is a course id; the Chinese title `AI 启蒙体验` should be resolved through `docs/course-id-registry.md`, not guessed from a folder name.
 - **Publishing videos without registering a new course.** Static files can exist while the course map remains non-clickable. Add `course-sources.yaml` and run `npm run sync`.
 - **Forgetting the local asset config.** Direct copies work once, but future syncs need `course-assets.local.yaml` to know where local videos come from.
 - **Treating Gitee clone failures as fatal when a local source exists.** If sync falls back to `course-assets.local.yaml` and ends with `error: 0`, report the warning but continue verification.
