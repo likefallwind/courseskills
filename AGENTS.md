@@ -33,7 +33,7 @@ Write Markdown in concise, task-oriented language. Skill directories use kebab-c
 
 ## Testing Guidelines
 
-No automated test suite is currently configured. For script changes, test with a small fixture course directory and verify generated files are placed in the documented layout: `outline.md`, `handout.md`, `slide-units/`, `slides/`, `course-deck.pdf`, `narration/`, `audio/`, and `course-video.mp4`. For manifest or install-documentation changes, validate paths against `README.md` and `docs/codex-install.md`.
+No automated test suite is currently configured. For script changes, test with a small fixture course directory and verify `movecourse` updates `course-assets.local.yaml` by default; only `--publish-static` should copy mp4 files into `static/course-assets` for local preview. For generated course packages, verify the documented layout: `outline.md`, `handout.md`, `slide-units/`, `slides/`, `course-deck.pdf`, `narration/`, `audio/`, and `course-video.mp4`. For manifest or install-documentation changes, validate paths against `README.md` and `docs/codex-install.md`.
 
 ## Commit & Pull Request Guidelines
 

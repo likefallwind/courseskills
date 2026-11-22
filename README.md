@@ -8,7 +8,7 @@ Course creation skills for **Codex** and **Claude Code**. This repository packag
 | **codex2course** | Topic / outline -> handout -> Imagegen slide images -> PDF |
 | **api2course** | Topic / outline -> handout -> OpenAI API slide images -> PDF |
 | **pdf2video** | Slide deck -> per-slide narration -> TTS audio -> mp4 |
-| **movecourse** | Copy generated lesson mp4 files into the aistudy101 website `course-assets` tree |
+| **movecourse** | Register generated lesson mp4 files in aistudy101 `course-assets.local.yaml` for video URL sync |
 
 The repository is intentionally laid out around one shared `skills/` directory:
 
@@ -133,6 +133,8 @@ For detailed Codex App, Windows CLI, WSL, Linux, and macOS setup notes, see [doc
 
 - An AI-generated course directory containing `lessonN/*.mp4` files.
 - The aistudy101 website checkout at `/home/likefallwind/code/aistudy101-website`.
+- `course-assets.local.yaml` stays local and git-ignored; videos are not copied into `static/` by default.
+- Python with PyYAML available; the website sync environment already provides it.
 
 ---
 
@@ -156,8 +158,8 @@ Turn the course in ./course/ into a narrated lecture video, voice: zh-CN-YunxiNe
 # Full course asset flow
 Design a Vibe Coding course, build slides, then produce a narrated mp4.
 
-# Publish generated videos only
-Move only this generated course's videos to aistudy101 course-assets as ai-enlightenment.
+# Register generated videos only
+Register this generated course's videos for aistudy101 as ai-enlightenment.
 ```
 
 ---
@@ -192,7 +194,7 @@ Several skills ship helper scripts used internally. You can also run them direct
 | `skills/api2course/scripts/images2pdf.py` | Combine `slides/*.png` into a PDF |
 | `skills/pdf2video/scripts/synth_audio.py` | Synthesize narration audio |
 | `skills/pdf2video/scripts/assemble_video.py` | Pair slides + audio into `course-video.mp4` |
-| `skills/movecourse/scripts/movecourse.py` | Copy or move `lessonN/*.mp4` into website course-assets |
+| `skills/movecourse/scripts/movecourse.py` | Validate `lessonN/*.mp4` and update aistudy101 local video asset config |
 
 ```bash
 python skills/codex2course/scripts/split_handout.py course/handout.md
@@ -202,3 +204,5 @@ python skills/pdf2video/scripts/synth_audio.py course/
 python skills/pdf2video/scripts/assemble_video.py course/
 python skills/movecourse/scripts/movecourse.py --course ai-enlightenment --source course/ --dry-run
 ```
+
+`movecourse` defaults to updating `course-assets.local.yaml`; run `npm run sync` in the website repo to write video URL metadata. Use `--publish-static` only for an explicit local static preview copy.
