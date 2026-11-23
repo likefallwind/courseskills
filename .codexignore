@@ -6,5 +6,7 @@ lesson*/
 *.mp4
 *.mp3
 *.wav
+*.ogg
+*.pcm
 *.png
 *.pdf

@@ -8,6 +8,8 @@ Course creation skills for **Codex** and **Claude Code**. This repository packag
 | **codex2course** | Topic / outline -> handout -> Imagegen slide images -> PDF |
 | **api2course** | Topic / outline -> handout -> OpenAI API slide images -> PDF |
 | **pdf2video** | Slide deck -> per-slide narration -> TTS audio -> mp4 |
+| **ppt2video** | PPTX + verbatim transcript -> normalized narration -> Doubao audio -> mp4 |
+| **doubao-voice** | Generate official Doubao voices through an Agent Plan Gateway |
 | **movecourse** | Register generated lesson mp4 files in aistudy101 `course-assets.local.yaml` for video URL sync |
 
 The repository is intentionally laid out around one shared `skills/` directory:
@@ -35,6 +37,8 @@ npx skills add likefallwind/courseskills --skill ai-tutorials
 npx skills add likefallwind/courseskills --skill codex2course
 npx skills add likefallwind/courseskills --skill api2course
 npx skills add likefallwind/courseskills --skill pdf2video
+npx skills add likefallwind/courseskills --skill ppt2video
+npx skills add likefallwind/courseskills --skill doubao-voice
 npx skills add likefallwind/courseskills --skill movecourse
 ```
 
@@ -54,6 +58,8 @@ Installed plugin skills are namespaced:
 /courseskills:codex2course
 /courseskills:api2course
 /courseskills:pdf2video
+/courseskills:ppt2video
+/courseskills:doubao-voice
 /courseskills:movecourse
 ```
 
@@ -129,6 +135,19 @@ For detailed Codex App, Windows CLI, WSL, Linux, and macOS setup notes, see [doc
   export MINIMAX_API_KEY=your_key_here
   ```
 
+### ppt2video
+
+- A `.pptx` and its original page-mapped verbatim transcript. The workflow first writes a canonical `transcript.normalized.md`; the parser does not guess raw transcript headings.
+- LibreOffice (`soffice`), Poppler (`pdftoppm`), and `ffmpeg`/`ffprobe` on `PATH`.
+- The sibling `doubao-voice` and `pdf2video` skills. Prefer the full repository/plugin installation; a standalone `ppt2video` install also needs those siblings.
+- Real audio uses the Doubao Gateway below. Default male lecture voice: `zh_male_yuanboxiaoshu_uranus_bigtts` (渊博小叔 2.0); audition one page before batch synthesis.
+
+### doubao-voice
+
+- Python 3; the CLI uses only the standard library.
+- A speech-capable Gateway exposing `/v1/audio/speech`. Use the existing `API_GATEWAY` credential or set `DOUBAO_VOICE_GATEWAY_API_KEY` as an explicit override; this only reuses the credential and does not make a chat-only Gateway support TTS. Optional `DOUBAO_VOICE_GATEWAY_BASE_URL` defaults to `http://127.0.0.1:8111`.
+- Official Doubao speaker IDs only; see `skills/doubao-voice/references/voices.md` for curated model-2.0 options and the [official voice list](https://docs.volcengine.com/docs/doubao-voice/tone-list-3?lang=zh) for updates. Voice cloning requires a separately authorized Speech API key and is out of scope.
+
 ### movecourse
 
 - An AI-generated course directory containing `lessonN/*.mp4` files.
@@ -154,6 +173,12 @@ Use api2course to create a 6-hour Python async course with OpenAI API generated 
 
 # pdf2video
 Turn the course in ./course/ into a narrated lecture video, voice: zh-CN-YunxiNeural.
+
+# ppt2video
+Turn ./lesson.pptx and its verbatim transcript into a narrated course video with a male teacher voice.
+
+# doubao-voice
+Generate course narration with an official Doubao voice through the Agent Plan Gateway.
 
 # Full course asset flow
 Design a Vibe Coding course, build slides, then produce a narrated mp4.
@@ -194,6 +219,9 @@ Several skills ship helper scripts used internally. You can also run them direct
 | `skills/api2course/scripts/images2pdf.py` | Combine `slides/*.png` into a PDF |
 | `skills/pdf2video/scripts/synth_audio.py` | Synthesize narration audio |
 | `skills/pdf2video/scripts/assemble_video.py` | Pair slides + audio into `course-video.mp4` |
+| `skills/ppt2video/scripts/prepare_course.py` | Render PPTX and extract canonical per-page narration |
+| `skills/ppt2video/scripts/synth_audio.py` | Batch narration through `doubao-voice`, with scoped regeneration |
+| `skills/doubao-voice/scripts/doubao_voice.py` | Generate official Doubao voices through an Agent Plan Gateway |
 | `skills/movecourse/scripts/movecourse.py` | Validate `lessonN/*.mp4` and update aistudy101 local video asset config |
 
 ```bash
@@ -201,6 +229,9 @@ python skills/codex2course/scripts/split_handout.py course/handout.md
 python skills/codex2course/scripts/images2pdf.py course/slides course/course-deck.pdf
 python skills/api2course/scripts/generate_openai_image.py --prompt-file course/prompt.txt --out course/slides/001.png
 python skills/pdf2video/scripts/synth_audio.py course/
+python skills/ppt2video/scripts/prepare_course.py lesson.pptx course/transcript.normalized.md course/
+python skills/ppt2video/scripts/synth_audio.py course/ --only 001
+python skills/doubao-voice/scripts/doubao_voice.py speak --text '你好。' --voice zh_male_yuanboxiaoshu_uranus_bigtts --output course/audio/doubao.mp3
 python skills/pdf2video/scripts/assemble_video.py course/
 python skills/movecourse/scripts/movecourse.py --course ai-enlightenment --source course/ --dry-run
 ```

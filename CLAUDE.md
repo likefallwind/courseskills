@@ -12,7 +12,7 @@ This is **not an application** — it is a package of authored *skills* for cour
 
 The same `skills/*/SKILL.md` files back all three distributions. There is no build step; `package.json` is metadata only. Editing a skill changes every distribution at once.
 
-## The five skills form a pipeline
+## Seven skills: a course pipeline plus PPT and voice utilities
 
 ```
 ai-tutorials   design syllabus / lessons / projects (text only)
@@ -23,7 +23,13 @@ api2course     same pipeline, but slide PNGs come from OpenAI gpt-image-2 instea
 pdf2video      slide deck → per-slide narration → TTS audio → narrated .mp4
      │
 movecourse     publish lesson .mp4 files into the aistudy101 website course-assets tree
+
+ppt2video      PPTX + raw transcript → normalized transcript → slide PNGs → Doubao audio → .mp4
 ```
+
+`ppt2video` is an alternative PPTX input route. It reuses the `pdf2video` video assembler and the `doubao-voice` CLI; its parser accepts only the canonical normalized transcript, never raw transcript keywords.
+
+`doubao-voice` is a standalone utility and an explicit `ppt2video` dependency, not an automatic `pdf2video` provider. It generates official Doubao voices through the API Gateway client token only. Its curated model-2.0 voice options and official update link live in `references/voices.md`; the default male lecture voice is `zh_male_yuanboxiaoshu_uranus_bigtts`. Voice cloning requires a separately authorized Speech API key and is intentionally out of scope.
 
 `codex2course` and `api2course` are near-identical twins; the *only* real difference is the slide-image route (Codex `imagegen` skill vs. `scripts/generate_openai_image.py` calling `gpt-image-2`). Changes to handout/slide-unit/PDF logic usually need to be mirrored across both — note that `split_handout.py` and `images2pdf.py` are duplicated in both skills' `scripts/`.
 
@@ -60,13 +66,16 @@ python skills/codex2course/scripts/split_handout.py course/handout.md         # 
 python skills/codex2course/scripts/images2pdf.py course/slides                 # → <title>.pdf (Pillow)
 python skills/api2course/scripts/generate_openai_image.py --prompt-file course/p.txt --out course/slides/001.png   # OPENAI_API_KEY, gpt-image-2
 python skills/pdf2video/scripts/synth_audio.py course/                         # edge-tts or MINIMAX_API_KEY
+python skills/ppt2video/scripts/prepare_course.py deck.pptx course/transcript.normalized.md course/
+python skills/ppt2video/scripts/synth_audio.py course/ --only 001              # Doubao Gateway, after approval
+python skills/doubao-voice/scripts/doubao_voice.py speak --text '你好。' --voice zh_male_yuanboxiaoshu_uranus_bigtts --output course/audio/doubao.mp3
 python skills/pdf2video/scripts/assemble_video.py course/                      # ffmpeg on PATH
 python skills/movecourse/scripts/movecourse.py --course ai-enlightenment --source course/ --dry-run
 ```
 
-Use `--dry-run` (movecourse) when validating publish/copy behavior. There is no automated test suite — validate script changes against a small fixture course directory and confirm files land in the layout above.
+Use `--dry-run` (movecourse) when validating publish/copy behavior. There is no repository-wide test suite — validate course scripts against a small fixture directory and confirm files land in the layout above. Offline tests: `python -m unittest discover -s skills/doubao-voice/tests -v` and `python -m unittest discover -s skills/ppt2video/tests -v`.
 
-External dependencies by skill: `codex2course`/`api2course` need Pillow; `api2course` needs `OPENAI_API_KEY`; `pdf2video` needs `ffmpeg` plus either `edge-tts` (free) or `MINIMAX_API_KEY` + `requests` (paid). Keep all credentials in env vars.
+External dependencies by skill: `codex2course`/`api2course` need Pillow; `api2course` needs `OPENAI_API_KEY`; `pdf2video` needs `ffmpeg` plus either `edge-tts` (free) or `MINIMAX_API_KEY` + `requests` (paid). `ppt2video` needs LibreOffice, Poppler, `ffmpeg`/`ffprobe`, the two sibling skills, and a Gateway token for real Doubao speech. `doubao-voice` is stdlib-only. Keep all credentials in env vars.
 
 ## movecourse is environment-coupled
 
@@ -76,5 +85,5 @@ External dependencies by skill: `codex2course`/`api2course` need Pillow; `api2co
 
 - Skill dirs are kebab-case (`codex2course`); scripts are snake_case (`split_handout.py`).
 - Write `SKILL.md` content in concise, task-oriented language. All generated course content (handout text, on-slide text, narration) must match the language of the user's input.
-- Generated media (`*.mp4 *.mp3 *.wav *.png *.pdf`), `course/`, `lesson*/`, and `__pycache__/` are gitignored here (see `.gitignore` / `.codexignore`). Do not commit generated course outputs into this repo.
+- Generated media (`*.mp4 *.mp3 *.wav *.ogg *.pcm *.png *.pdf`), `course/`, `lesson*/`, and `__pycache__/` are gitignored here (see `.gitignore` / `.codexignore`). Do not commit generated course outputs into this repo.
 - When a skill generates a course *inside another git repo*, its `.gitignore` guidance must ignore only intermediates it actually created (verified via `git ls-files` / existence checks), never pre-existing tracked files that merely share a name like `outline.md` — and the final PDF must stay trackable. See `.learnings/LEARNINGS.md` (LRN-20260511-001).

@@ -21,6 +21,10 @@ python skills/codex2course/scripts/split_handout.py course/handout.md
 python skills/codex2course/scripts/images2pdf.py course/slides course/course-deck.pdf
 python skills/api2course/scripts/generate_openai_image.py --prompt-file course/prompt.txt --out course/slides/001.png
 python skills/pdf2video/scripts/synth_audio.py course/
+python skills/ppt2video/scripts/prepare_course.py deck.pptx course/transcript.normalized.md course/
+python skills/ppt2video/scripts/synth_audio.py course/ --only 001
+python -m unittest discover -s skills/ppt2video/tests -v
+python -m unittest discover -s skills/doubao-voice/tests -v
 python skills/pdf2video/scripts/assemble_video.py course/
 python skills/movecourse/scripts/movecourse.py --course ai-enlightenment --source course/ --dry-run
 ```
@@ -33,7 +37,7 @@ Write Markdown in concise, task-oriented language. Skill directories use kebab-c
 
 ## Testing Guidelines
 
-No automated test suite is currently configured. For script changes, test with a small fixture course directory and verify `movecourse` updates `course-assets.local.yaml` by default; only `--publish-static` should copy mp4 files into `static/course-assets` for local preview. For generated course packages, verify the documented layout: `outline.md`, `handout.md`, `slide-units/`, `slides/`, `course-deck.pdf`, `narration/`, `audio/`, and `course-video.mp4`. For manifest or install-documentation changes, validate paths against `README.md` and `docs/codex-install.md`.
+No repository-wide automated test suite is currently configured; `doubao-voice` and `ppt2video` provide offline `unittest` coverage. For other script changes, test with a small fixture course directory and verify `movecourse` updates `course-assets.local.yaml` by default; only `--publish-static` should copy mp4 files into `static/course-assets` for local preview. For generated course packages, verify the documented layout: `outline.md`, `handout.md`, `slide-units/`, `slides/`, `course-deck.pdf`, `narration/`, `audio/`, and `course-video.mp4`. For manifest or install-documentation changes, validate paths against `README.md` and `docs/codex-install.md`.
 
 ## Commit & Pull Request Guidelines
 
